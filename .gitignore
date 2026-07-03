@@ -1,0 +1,11 @@
+.vs
+bin
+obj
+*.user
+*.suo
+*.sln
+*.userosscache
+*.sln.docstates
+venv
+__pycache__
+packages
