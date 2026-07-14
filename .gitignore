@@ -9,3 +9,8 @@ obj
 venv
 __pycache__
 packages
+*.pyc
+
+# SQLite database (created by `alembic upgrade head`)
+*.db
+server/parental_control.db

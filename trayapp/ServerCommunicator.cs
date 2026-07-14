@@ -110,8 +110,9 @@ namespace trayapp
             var handshake = new
             {
                 type = "handshake",
-                machineName = Environment.MachineName,
-                userName = Environment.UserName
+                deviceId = DeviceInfo.GetDeviceId(),      // -> deviceUser.deviceID (hashed hardware id)
+                machineName = Environment.MachineName,     // -> deviceUser.deviceName
+                userName = Environment.UserName            // -> deviceUser.osUsername
             };
             await SendJson(handshake, token);
         }
@@ -144,9 +145,7 @@ namespace trayapp
             WindowChangedMessage? toSend = null;
             lock (_sessionLock)
             {
-                // We just left _currentApp (focused _currentStartMs..now) for switchedTo.
-                // Only report the session if it lasted at least MinSessionMs – this is
-                // the "1 second debounce": brief flicks through an app are ignored.
+                // 1 second debounce for min session minutes 
                 if (_hasCurrent && now - _currentStartMs >= MinSessionMs)
                 {
                     toSend = new WindowChangedMessage
