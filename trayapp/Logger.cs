@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 
 namespace TrayApp
@@ -23,11 +24,13 @@ namespace TrayApp
 
         public static void Log(string message)
         {
+
             if (string.IsNullOrEmpty(_logFilePath))
                 return;
 
             var timestamp = DateTime.Now.ToString("[MM-dd-yy HH-mm-ss]");
             var logEntry = $"{timestamp} {message}{Environment.NewLine}";
+            Debug.WriteLine(logEntry);
 
             lock (_lock)
             {

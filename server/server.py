@@ -55,11 +55,22 @@ def ws_handler(ws):
             if msg_type == "window_changed":
                 with clients_lock:
                     info = clients.get(ws_id, {})
+
+                prev = data.get("previous") or {}
+                start = data.get("startTime")
+                end = data.get("endTime")
+                duration = (
+                    f"{(end - start) / 1000.0:.1f}s"
+                    if isinstance(start, (int, float)) and isinstance(end, (int, float))
+                    else "?"
+                )
+
                 print(
                     f"[{info.get('machine_name')}] window_changed -> "
-                    f"exe={data.get('exeName')} "
-                    f"friendly={data.get('friendlyName')} "
-                    f"path={data.get('path')}"
+                    f"exe={prev.get('exeName')} "
+                    f"friendly={prev.get('fileDescription')} "
+                    f"path={prev.get('path')} "
+                    f"used for {duration} (start={start} end={end})"
                 )
             elif not data:
                 # empty payload, likely a stray/ping connection - ignore quietly

@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Net.WebSockets;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -12,20 +11,53 @@ namespace trayapp
 {
     internal static class ServerCommunicator
     {
-        // hardcoded server address
         private static readonly Uri ServerUri = new Uri("ws://127.0.0.1:5002/ws");
 
         private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(5);
-        private static readonly TimeSpan ReceiveTimeout = TimeSpan.FromSeconds(30);
+
+        // A focus session shorter than this is not reported (the "1 second debounce").
+        private static readonly long MinSessionMs = 1000;
+
+        // System.Text.Json ignores public fields unless told otherwise. Our message
+        // structs (e.g. WindowChangedMessage) expose fields, so without this every
+        // payload would serialize to "{}".
+        private static readonly JsonSerializerOptions JsonOptions =
+            new JsonSerializerOptions { IncludeFields = true };
 
         private static ClientWebSocket _ws;
         private static readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
         private static CancellationTokenSource _cts;
 
+        // Pending message: latest window state saved when WS is disconnected, drained on connect
+        private static WindowChangedMessage? _pendingMessage;
+        private static readonly object _pendingLock = new object();
+
+        // Current focus session: the app in the foreground now and when it gained focus.
+        // When focus changes we close this session and report it (if it lasted long
+        // enough), then open a new one for the app we switched to.
+        private static Application _currentApp;
+        private static long _currentStartMs;
+        private static bool _hasCurrent;
+        private static readonly object _sessionLock = new object();
+
         public static void Start()
         {
             Logger.Log("AppWebSocketClient starting");
             _cts = new CancellationTokenSource();
+
+            // Seed the session with whatever is focused at startup so the first real
+            // switch reports the app the user was already in.
+            IntPtr initial = WindowChangedListener.GetCurrentForegroundWindow();
+            if (initial != IntPtr.Zero)
+            {
+                lock (_sessionLock)
+                {
+                    _currentApp = ApplicationResolver.Resolve(initial);
+                    _currentStartMs = NowUnixMs();
+                    _hasCurrent = true;
+                }
+            }
+
             WindowChangedListener.RegisterCallback(OnWindowChanged);
             _ = Task.Run(() => ConnectLoop(_cts.Token));
         }
@@ -43,12 +75,16 @@ namespace trayapp
                 try
                 {
                     _ws = new ClientWebSocket();
+                    // Keepalive pings keep an idle connection alive and surface a dead
+                    // peer (so we don't need an artificial receive timeout below).
+                    _ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
                     Logger.Log($"WS: connecting to {ServerUri}...");
                     await _ws.ConnectAsync(ServerUri, token);
                     Logger.Log("WS: connected");
 
                     await SendHandshake(token);
-                    await ReceiveLoop(token); // blocks until closed / timed out / errored
+                    DrainPending(token);
+                    await ReceiveLoop(token);
                 }
                 catch (Exception ex)
                 {
@@ -85,52 +121,107 @@ namespace trayapp
             var buffer = new byte[4096];
             while (_ws.State == WebSocketState.Open && !token.IsCancellationRequested)
             {
-                using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token))
+                // Block until the server sends something or the connection drops. There
+                // is deliberately no idle timeout: the server never sends unsolicited
+                // data, so a timeout here would tear down a perfectly healthy connection
+                // (this was causing a reconnect roughly every 30s). A genuinely dead peer
+                // makes ReceiveAsync throw, which bubbles up to ConnectLoop and reconnects.
+                var result = await _ws.ReceiveAsync(new ArraySegment<byte>(buffer), token);
+
+                if (result.MessageType == WebSocketMessageType.Close)
                 {
-                    timeoutCts.CancelAfter(ReceiveTimeout);
-
-                    WebSocketReceiveResult result;
-                    try
-                    {
-                        result = await _ws.ReceiveAsync(new ArraySegment<byte>(buffer), timeoutCts.Token);
-                    }
-                    catch (OperationCanceledException) when (!token.IsCancellationRequested)
-                    {
-                        Logger.Log("WS: receive timed out, reconnecting");
-                        return; // falls back to ConnectLoop, which reconnects
-                    }
-
-                    if (result.MessageType == WebSocketMessageType.Close)
-                    {
-                        Logger.Log("WS: server closed connection");
-                        return;
-                    }
-                    // inbound payloads (if any) currently ignored
+                    Logger.Log("WS: server closed connection");
+                    return;
                 }
             }
         }
 
         private static void OnWindowChanged(IntPtr hwnd)
         {
+            long now = NowUnixMs();
+            Application switchedTo = ApplicationResolver.Resolve(hwnd);
+
+            WindowChangedMessage? toSend = null;
+            lock (_sessionLock)
+            {
+                // We just left _currentApp (focused _currentStartMs..now) for switchedTo.
+                // Only report the session if it lasted at least MinSessionMs – this is
+                // the "1 second debounce": brief flicks through an app are ignored.
+                if (_hasCurrent && now - _currentStartMs >= MinSessionMs)
+                {
+                    toSend = new WindowChangedMessage
+                    {
+                        type = "window_changed",
+                        startTime = _currentStartMs,
+                        endTime = now,
+                        previous = _currentApp
+                    };
+                }
+
+                _currentApp = switchedTo;
+                _currentStartMs = now;
+                _hasCurrent = true;
+            }
+
+            if (toSend.HasValue)
+                SendOrQueue(toSend.Value);
+        }
+
+        private static void SendOrQueue(WindowChangedMessage msg)
+        {
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var app = ResolveApplication(hwnd);
-                    var msg = new WindowChangedMessage
+                    if (!await TrySendJson(msg, _cts?.Token ?? CancellationToken.None))
                     {
-                        type = "window_changed",
-                        exeName = app.exeName,
-                        friendlyName = app.fileDescription,
-                        path = app.path
-                    };
-                    await SendJson(msg, _cts?.Token ?? CancellationToken.None);
+                        // Socket not open – save as pending so it fires on next connect
+                        lock (_pendingLock)
+                            _pendingMessage = msg;
+                    }
                 }
                 catch (Exception ex)
                 {
                     Logger.Log($"WS: failed to send window_changed - {ex.Message}");
                 }
             });
+        }
+
+        private static long NowUnixMs()
+        {
+            return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        }
+
+        /// <summary>Try to send; return false if the socket isn't open or the send fails.
+        /// Never throws – the caller can safely treat false as "save for later".</summary>
+        private static async Task<bool> TrySendJson<T>(T payload, CancellationToken token)
+        {
+            // Snapshot the socket: the reconnect loop may dispose _ws / set it null
+            // concurrently, so we must not re-read the field after the state check.
+            var ws = _ws;
+            if (ws == null || ws.State != WebSocketState.Open)
+                return false;
+
+            var json = JsonSerializer.Serialize(payload, JsonOptions);
+            var bytes = Encoding.UTF8.GetBytes(json);
+
+            await _sendLock.WaitAsync(token);
+            try
+            {
+                await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, token);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                // Socket raced closed/disposed mid-send. Report false so the message
+                // is queued as pending instead of being dropped.
+                Logger.Log($"WS: send failed - {ex.GetType().Name}: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _sendLock.Release();
+            }
         }
 
         private static async Task SendJson<T>(T payload, CancellationToken token)
@@ -141,7 +232,7 @@ namespace trayapp
                 return;
             }
 
-            var json = JsonSerializer.Serialize(payload);
+            var json = JsonSerializer.Serialize(payload, JsonOptions);
             var bytes = Encoding.UTF8.GetBytes(json);
 
             await _sendLock.WaitAsync(token);
@@ -155,26 +246,21 @@ namespace trayapp
             }
         }
 
-        private static Application ResolveApplication(IntPtr hwnd)
+        private static void DrainPending(CancellationToken token)
         {
-            GetWindowThreadProcessId(hwnd, out uint pid);
-            using (var proc = System.Diagnostics.Process.GetProcessById((int)pid))
+            WindowChangedMessage? pending;
+            lock (_pendingLock)
             {
-                string path = "";
-                string fileDescription = "";
-                try { path = proc.MainModule.FileName; } catch { }
-                try { fileDescription = proc.MainModule.FileVersionInfo.FileDescription ?? ""; } catch { }
+                pending = _pendingMessage;
+                _pendingMessage = null;
+            }
 
-                return new Application
-                {
-                    exeName = proc.ProcessName,
-                    fileDescription = fileDescription,
-                    path = path
-                };
+            if (pending.HasValue)
+            {
+                Logger.Log("WS: draining pending window_changed message");
+                _ = TrySendJson(pending.Value, token);
             }
         }
 
-        [DllImport("user32.dll")]
-        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
     }
 }

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using TrayApp;
 namespace trayapp
@@ -62,7 +63,10 @@ namespace trayapp
         public static void RegisterCallback(Action<IntPtr> callback)
         {
             Logger.Log("window changed listener: new callback added");
-            Callbacks.Add(callback);
+            lock (Callbacks)
+            {
+                Callbacks.Add(callback);
+            }
         }
         private static void OnForegroundChanged(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
         {
@@ -70,9 +74,15 @@ namespace trayapp
                 return;
             string exeName = GetProcessName(hwnd);
             Logger.Log($"Window changed! app={exeName} hwnd={hwnd}");
-            foreach (var cb in Callbacks)
+            // Snapshot the callback list so iteration is safe even if a callback mutates it
+            Action<IntPtr>[] snapshot;
+            lock (Callbacks)
             {
-                cb(hwnd);
+                snapshot = Callbacks.ToArray();
+            }
+            foreach (var cb in snapshot)
+            {
+                try { cb(hwnd); } catch { }
             }
         }
         private static string GetProcessName(IntPtr hwnd)
