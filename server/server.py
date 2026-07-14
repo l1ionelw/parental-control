@@ -5,8 +5,13 @@ import uuid
 from flask import Flask
 from flask_sock import Sock
 
+from api import api as api_blueprint
+
 app = Flask(__name__)
 sock = Sock(app)
+
+# REST API for the react-client frontend.
+app.register_blueprint(api_blueprint, url_prefix="/api")
 
 # ws_id -> {"machine_name": str, "user_name": str, "ws": WebSocket}
 clients = {}
