@@ -78,6 +78,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="ConfigManager.cs" />
     <Compile Include="ApplicationResolver.cs" />
     <Compile Include="AppContext.cs" />
     <Compile Include="DeviceInfo.cs" />
@@ -90,6 +91,9 @@
       <DependentUpon>Overlay.cs</DependentUpon>
     </Compile>
     <Compile Include="Program.cs" />
+    <Compile Include="ServerUrlDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
     <Compile Include="Structs\Application.cs" />
     <Compile Include="Structs\WindowChangedMessage.cs" />
     <Compile Include="WindowChangedListener.cs" />

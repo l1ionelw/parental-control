@@ -95,3 +95,63 @@ def devices():
         return jsonify({"devices": [device_public(d) for d in rows]})
     finally:
         session.close()
+
+
+@api.post("/devices/register")
+def register_device():
+    """Register a device and get a user_id for WebSocket auth.
+    
+    Creates or finds DeviceUser by deviceID, creates a linked User account
+    (username = deviceID[:8] + osUsername), returns user_id.
+    """
+    data = request.get_json(silent=True) or {}
+    device_id = (data.get("deviceId") or "").strip()
+    device_name = (data.get("deviceName") or "").strip()
+    os_username = (data.get("osUsername") or "").strip()
+
+    if not device_id or not os_username:
+        return jsonify({"error": "deviceId and osUsername are required"}), 400
+
+    session = SessionLocal()
+    try:
+        # Find or create DeviceUser
+        device_user = session.query(DeviceUser).filter(DeviceUser.deviceID == device_id).first()
+        if not device_user:
+            device_user = DeviceUser(
+                createdAt=now_ms(),
+                deviceID=device_id,
+                osUsername=os_username,
+                deviceName=device_name or os_username,
+            )
+            session.add(device_user)
+            session.commit()
+            session.refresh(device_user)
+        else:
+            # Update device name if provided
+            if device_name:
+                device_user.deviceName = device_name
+                session.commit()
+
+        # Create or find linked User account
+        # Username format: device_id[:8] + "@" + os_username (unique per device-user pair)
+        user_username = f"{device_id[:8]}@{os_username}"
+        user = session.query(User).filter(User.username == user_username).first()
+        if not user:
+            user = User(
+                createdAt=now_ms(),
+                username=user_username,
+                password="",  # no password - device auth only
+                type="Standard",
+            )
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+
+        return jsonify({
+            "userId": user.id,
+            "username": user.username,
+            "deviceId": device_user.deviceID,
+            "deviceName": device_user.deviceName,
+        })
+    finally:
+        session.close()

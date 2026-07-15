@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Net.Http;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -11,16 +12,9 @@ namespace trayapp
 {
     internal static class ServerCommunicator
     {
-        private static readonly Uri ServerUri = new Uri("ws://127.0.0.1:5002/ws");
-
         private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(5);
-
-        // A focus session shorter than this is not reported (the "1 second debounce").
         private static readonly long MinSessionMs = 1000;
 
-        // System.Text.Json ignores public fields unless told otherwise. Our message
-        // structs (e.g. WindowChangedMessage) expose fields, so without this every
-        // payload would serialize to "{}".
         private static readonly JsonSerializerOptions JsonOptions =
             new JsonSerializerOptions { IncludeFields = true };
 
@@ -28,25 +22,24 @@ namespace trayapp
         private static readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
         private static CancellationTokenSource _cts;
 
-        // Pending message: latest window state saved when WS is disconnected, drained on connect
         private static WindowChangedMessage? _pendingMessage;
         private static readonly object _pendingLock = new object();
 
-        // Current focus session: the app in the foreground now and when it gained focus.
-        // When focus changes we close this session and report it (if it lasted long
-        // enough), then open a new one for the app we switched to.
         private static Application _currentApp;
         private static long _currentStartMs;
         private static bool _hasCurrent;
         private static readonly object _sessionLock = new object();
+
+        // Device registration info (populated after REST registration)
+        private static string _deviceId;
+        private static int _userId;
+        private static string _username;
 
         public static void Start()
         {
             Logger.Log("AppWebSocketClient starting");
             _cts = new CancellationTokenSource();
 
-            // Seed the session with whatever is focused at startup so the first real
-            // switch reports the app the user was already in.
             IntPtr initial = WindowChangedListener.GetCurrentForegroundWindow();
             if (initial != IntPtr.Zero)
             {
@@ -68,18 +61,57 @@ namespace trayapp
             try { _ws?.Abort(); } catch { }
         }
 
+        public static void Restart()
+        {
+            Logger.Log("WS: Restarting connection...");
+            Stop();
+            // Small delay to let the old connection clean up
+            Task.Run(async () =>
+            {
+                await Task.Delay(500);
+                Start();
+            });
+        }
+
         private static async Task ConnectLoop(CancellationToken token)
         {
+            // Get server URL from config
+            string serverUrl = ConfigManager.CurrentConfig.ServerUrl;
+            if (string.IsNullOrEmpty(serverUrl))
+            {
+                Logger.Log("WS: No server URL configured, waiting for config...");
+                return;
+            }
+
+            // Load persisted deviceId and userId from config
+            if (!string.IsNullOrEmpty(ConfigManager.CurrentConfig.DeviceId) && ConfigManager.CurrentConfig.UserId > 0)
+            {
+                _deviceId = ConfigManager.CurrentConfig.DeviceId;
+                _userId = ConfigManager.CurrentConfig.UserId;
+                _username = ConfigManager.CurrentConfig.Username;
+                Logger.Log($"WS: Loaded persisted config: DeviceId={_deviceId}, UserId={_userId}");
+            }
+
+            // Ensure device is registered (will skip if already have valid IDs)
+            if (!await EnsureDeviceRegistered(serverUrl, token))
+            {
+                Logger.Log("WS: Device registration failed, will retry on reconnect");
+            }
+
             while (!token.IsCancellationRequested)
             {
                 try
                 {
                     _ws = new ClientWebSocket();
-                    // Keepalive pings keep an idle connection alive and surface a dead
-                    // peer (so we don't need an artificial receive timeout below).
                     _ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(30);
-                    Logger.Log($"WS: connecting to {ServerUri}...");
-                    await _ws.ConnectAsync(ServerUri, token);
+
+                    // Flask always serves plain HTTP/WS on port 5002 (or user-explicit port)
+                    var httpUri = new Uri(serverUrl);
+                    int port = httpUri.IsDefaultPort ? 5002 : httpUri.Port;
+                    var wsUri = new UriBuilder("ws", httpUri.Host, port, "ws").Uri;
+                    
+                    Logger.Log($"WS: connecting to {wsUri}...");
+                    await _ws.ConnectAsync(wsUri, token);
                     Logger.Log("WS: connected");
 
                     await SendHandshake(token);
@@ -105,14 +137,82 @@ namespace trayapp
             }
         }
 
+        private static async Task<bool> EnsureDeviceRegistered(string serverUrl, CancellationToken token)
+        {
+            // If we already have deviceId and userId from previous registration, use them
+            if (!string.IsNullOrEmpty(_deviceId) && _userId > 0)
+                return true;
+
+            // DeviceId comes from hardware hash
+            _deviceId = DeviceInfo.GetDeviceId();
+            string deviceName = Environment.MachineName;
+            string osUsername = Environment.UserName;
+
+try
+            {
+                using (var http = new HttpClient { Timeout = TimeSpan.FromSeconds(10) })
+                {
+                    var svrUri = new Uri(serverUrl);
+                    int svrPort = svrUri.IsDefaultPort ? 5002 : svrUri.Port;
+                    var registerUrl = new UriBuilder("http", svrUri.Host, svrPort, "api/devices/register").Uri;
+                    var payload = new
+                    {
+                        deviceId = _deviceId,
+                        deviceName = deviceName,
+                        osUsername = osUsername
+                    };
+                    var json = JsonSerializer.Serialize(payload);
+                    var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                    Logger.Log($"WS: Registering device with {registerUrl}...");
+                    var response = await http.PostAsync(registerUrl, content, token);
+                    var responseJson = await response.Content.ReadAsStringAsync();
+
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        Logger.Log($"WS: Device registration failed: {response.StatusCode} - {responseJson}");
+                        return false;
+                    }
+
+                    var result = JsonSerializer.Deserialize<DeviceRegisterResponse>(responseJson);
+                    if (result == null || result.userId <= 0)
+                    {
+                        Logger.Log("WS: Device registration returned invalid response");
+                        return false;
+                    }
+
+                    _userId = result.userId;
+                    _username = result.username;
+                    _deviceId = result.deviceId; // in case server normalized it
+
+                    // Save to config for persistence
+                    ConfigManager.UpdateConfig(_deviceId, _userId, "", _username);
+
+                    Logger.Log($"WS: Device registered successfully: deviceId={_deviceId}, userId={_userId}, username={_username}");
+                    return true;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"WS: Device registration error - {ex.Message}");
+                return false;
+            }
+        }
+
         private static async Task SendHandshake(CancellationToken token)
         {
+            if (_userId <= 0 || string.IsNullOrEmpty(_deviceId))
+            {
+                Logger.Log("WS: Cannot send handshake - missing deviceId or userId");
+                return;
+            }
+
             var handshake = new
             {
                 type = "handshake",
-                deviceId = DeviceInfo.GetDeviceId(),      // -> deviceUser.deviceID (hashed hardware id)
-                machineName = Environment.MachineName,     // -> deviceUser.deviceName
-                userName = Environment.UserName            // -> deviceUser.osUsername
+                deviceId = _deviceId,
+                userId = _userId,
+                username = _username
             };
             await SendJson(handshake, token);
         }
@@ -122,11 +222,6 @@ namespace trayapp
             var buffer = new byte[4096];
             while (_ws.State == WebSocketState.Open && !token.IsCancellationRequested)
             {
-                // Block until the server sends something or the connection drops. There
-                // is deliberately no idle timeout: the server never sends unsolicited
-                // data, so a timeout here would tear down a perfectly healthy connection
-                // (this was causing a reconnect roughly every 30s). A genuinely dead peer
-                // makes ReceiveAsync throw, which bubbles up to ConnectLoop and reconnects.
                 var result = await _ws.ReceiveAsync(new ArraySegment<byte>(buffer), token);
 
                 if (result.MessageType == WebSocketMessageType.Close)
@@ -145,7 +240,6 @@ namespace trayapp
             WindowChangedMessage? toSend = null;
             lock (_sessionLock)
             {
-                // 1 second debounce for min session minutes 
                 if (_hasCurrent && now - _currentStartMs >= MinSessionMs)
                 {
                     toSend = new WindowChangedMessage
@@ -174,7 +268,6 @@ namespace trayapp
                 {
                     if (!await TrySendJson(msg, _cts?.Token ?? CancellationToken.None))
                     {
-                        // Socket not open – save as pending so it fires on next connect
                         lock (_pendingLock)
                             _pendingMessage = msg;
                     }
@@ -191,12 +284,8 @@ namespace trayapp
             return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         }
 
-        /// <summary>Try to send; return false if the socket isn't open or the send fails.
-        /// Never throws – the caller can safely treat false as "save for later".</summary>
         private static async Task<bool> TrySendJson<T>(T payload, CancellationToken token)
         {
-            // Snapshot the socket: the reconnect loop may dispose _ws / set it null
-            // concurrently, so we must not re-read the field after the state check.
             var ws = _ws;
             if (ws == null || ws.State != WebSocketState.Open)
                 return false;
@@ -212,8 +301,6 @@ namespace trayapp
             }
             catch (Exception ex)
             {
-                // Socket raced closed/disposed mid-send. Report false so the message
-                // is queued as pending instead of being dropped.
                 Logger.Log($"WS: send failed - {ex.GetType().Name}: {ex.Message}");
                 return false;
             }
@@ -261,5 +348,12 @@ namespace trayapp
             }
         }
 
+        private class DeviceRegisterResponse
+        {
+            public int userId { get; set; }
+            public string username { get; set; }
+            public string deviceId { get; set; }
+            public string deviceName { get; set; }
+        }
     }
 }
