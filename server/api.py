@@ -4,18 +4,20 @@ Endpoints:
   POST /api/register  -> create a Standard account, returns a JWT (auto-login)
   POST /api/login     -> validate credentials, returns a JWT
   GET  /api/devices   -> (protected) list device-users
+  GET  /api/apps      -> (protected) list all known applications
 
-No routes are protected except /devices. New accounts are always type "Standard";
-promote to "Administrator" by editing the DB directly during development.
+New accounts are always type "Standard"; promote to "Administrator" by editing
+the DB directly during development.
 """
 
+import json
 import time
 
 from flask import Blueprint, request, jsonify, g
 
 from db import SessionLocal
-from models import User, DeviceUser
-from auth import create_jwt_token, login_required
+from models import User, DeviceUser, Application, Event, AppLimit, Downtime
+from auth import create_jwt_token, login_required, admin_required
 
 api = Blueprint("api", __name__)
 
@@ -93,6 +95,279 @@ def devices():
     try:
         rows = session.query(DeviceUser).order_by(DeviceUser.deviceName).all()
         return jsonify({"devices": [device_public(d) for d in rows]})
+    finally:
+        session.close()
+
+
+def app_public(a):
+    try:
+        all_paths = json.loads(a.allPaths) if a.allPaths else []
+    except (json.JSONDecodeError, TypeError):
+        all_paths = []
+
+    return {
+        "id": a.id,
+        "exeName": a.exeName,
+        "fileDescription": a.fileDescription,
+        "path": a.path,
+        "allPaths": all_paths,
+        "createdAt": a.createdAt,
+    }
+
+
+@api.get("/apps")
+@login_required
+def apps():
+    from app_tracker import get_all_apps
+    rows = get_all_apps()
+    return jsonify({"apps": [app_public(a) for a in rows]})
+
+
+@api.get("/screentime")
+@login_required
+def screentime():
+    """Usage events for one device-user overlapping [startTime, endTime].
+
+    Uses an overlap filter (startTime <= range end AND endTime >= range start) so a
+    session that started the previous day but ran past midnight into this range is
+    still picked up. Each returned event is then clamped to [startTime, endTime], so
+    a session spanning the boundary is split between two days' worth of requests
+    instead of being credited whole to one side.
+    """
+    device_user_id = request.args.get("deviceUserId", type=int)
+    start_time = request.args.get("startTime", type=int)
+    end_time = request.args.get("endTime", type=int)
+
+    if device_user_id is None or start_time is None or end_time is None:
+        return jsonify({"error": "deviceUserId, startTime and endTime are required"}), 400
+
+    session = SessionLocal()
+    try:
+        events = (
+            session.query(Event)
+            .filter(
+                Event.deviceUserID == device_user_id,
+                Event.startTime <= end_time,
+                Event.endTime >= start_time,
+            )
+            .order_by(Event.startTime)
+            .all()
+        )
+
+        app_ids = {e.appID for e in events}
+        apps = (
+            {a.id: a for a in session.query(Application).filter(Application.id.in_(app_ids)).all()}
+            if app_ids
+            else {}
+        )
+
+        events_json = []
+        for e in events:
+            app = apps.get(e.appID)
+            clamped_start = max(e.startTime, start_time)
+            clamped_end = min(e.endTime, end_time)
+            events_json.append({
+                "startTime": clamped_start,
+                "endTime": clamped_end,
+                "appId": e.appID,
+                "exeName": app.exeName if app else None,
+                "fileDescription": app.fileDescription if app else None,
+            })
+
+        return jsonify({"events": events_json})
+    finally:
+        session.close()
+
+
+def limit_public(l):
+    return {
+        "appId": l.appID,
+        "dailyLimitMinutes": l.dailyLimitMinutes,
+        "updatedAt": l.updatedAt,
+    }
+
+
+@api.get("/limits")
+@login_required
+def get_limits():
+    """Viewable by any signed-in user; only admins may change them (see put_limit)."""
+    device_user_id = request.args.get("deviceUserId", type=int)
+    if device_user_id is None:
+        return jsonify({"error": "deviceUserId is required"}), 400
+
+    session = SessionLocal()
+    try:
+        rows = session.query(AppLimit).filter(AppLimit.deviceUserID == device_user_id).all()
+        return jsonify({"limits": [limit_public(l) for l in rows]})
+    finally:
+        session.close()
+
+
+@api.put("/limits")
+@admin_required
+def put_limit():
+    data = request.get_json(silent=True) or {}
+    device_user_id = data.get("deviceUserId")
+    app_id = data.get("appId")
+    daily_limit_minutes = data.get("dailyLimitMinutes")
+
+    if device_user_id is None or app_id is None:
+        return jsonify({"error": "deviceUserId and appId are required"}), 400
+
+    session = SessionLocal()
+    try:
+        existing = (
+            session.query(AppLimit)
+            .filter(AppLimit.deviceUserID == device_user_id, AppLimit.appID == app_id)
+            .first()
+        )
+
+        if daily_limit_minutes is None:
+            # No limit specified -> clear any existing one.
+            if existing:
+                session.delete(existing)
+                session.commit()
+            return jsonify({"limit": None})
+
+        if existing:
+            existing.dailyLimitMinutes = daily_limit_minutes
+            existing.updatedAt = now_ms()
+            session.commit()
+            session.refresh(existing)
+            return jsonify({"limit": limit_public(existing)})
+
+        limit = AppLimit(
+            createdAt=now_ms(),
+            updatedAt=now_ms(),
+            deviceUserID=device_user_id,
+            appID=app_id,
+            dailyLimitMinutes=daily_limit_minutes,
+        )
+        session.add(limit)
+        session.commit()
+        session.refresh(limit)
+        return jsonify({"limit": limit_public(limit)}), 201
+    finally:
+        session.close()
+
+
+def downtime_public(d):
+    return {
+        "id": d.id,
+        "deviceUserId": d.deviceUserID,
+        "startMinute": d.startMinute,
+        "endMinute": d.endMinute,
+        "enabled": d.enabled,
+        "updatedAt": d.updatedAt,
+    }
+
+
+def _validate_downtime_range(start_minute, end_minute):
+    if start_minute is None or end_minute is None:
+        return "startMinute and endMinute are required"
+    if not (0 <= start_minute < 1440) or not (0 <= end_minute < 1440):
+        return "startMinute and endMinute must be in [0, 1440)"
+    return None
+
+
+@api.get("/downtime")
+@login_required
+def get_downtime():
+    """Viewable by any signed-in user; only admins may change them (see below).
+    A device can have multiple downtime windows, so this returns a list."""
+    device_user_id = request.args.get("deviceUserId", type=int)
+    if device_user_id is None:
+        return jsonify({"error": "deviceUserId is required"}), 400
+
+    session = SessionLocal()
+    try:
+        rows = (
+            session.query(Downtime)
+            .filter(Downtime.deviceUserID == device_user_id)
+            .order_by(Downtime.startMinute)
+            .all()
+        )
+        return jsonify({"downtimes": [downtime_public(d) for d in rows]})
+    finally:
+        session.close()
+
+
+@api.post("/downtime")
+@admin_required
+def create_downtime():
+    """Adds a new downtime window for a device (devices may have several)."""
+    data = request.get_json(silent=True) or {}
+    device_user_id = data.get("deviceUserId")
+    start_minute = data.get("startMinute")
+    end_minute = data.get("endMinute")
+    enabled = data.get("enabled", True)
+
+    if device_user_id is None:
+        return jsonify({"error": "deviceUserId is required"}), 400
+
+    error = _validate_downtime_range(start_minute, end_minute)
+    if error:
+        return jsonify({"error": error}), 400
+
+    session = SessionLocal()
+    try:
+        row = Downtime(
+            createdAt=now_ms(),
+            updatedAt=now_ms(),
+            deviceUserID=device_user_id,
+            startMinute=start_minute,
+            endMinute=end_minute,
+            enabled=bool(enabled),
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return jsonify({"downtime": downtime_public(row)}), 201
+    finally:
+        session.close()
+
+
+@api.put("/downtime/<int:downtime_id>")
+@admin_required
+def update_downtime(downtime_id):
+    data = request.get_json(silent=True) or {}
+    start_minute = data.get("startMinute")
+    end_minute = data.get("endMinute")
+    enabled = data.get("enabled", True)
+
+    error = _validate_downtime_range(start_minute, end_minute)
+    if error:
+        return jsonify({"error": error}), 400
+
+    session = SessionLocal()
+    try:
+        row = session.query(Downtime).filter(Downtime.id == downtime_id).first()
+        if not row:
+            return jsonify({"error": "downtime not found"}), 404
+
+        row.startMinute = start_minute
+        row.endMinute = end_minute
+        row.enabled = bool(enabled)
+        row.updatedAt = now_ms()
+        session.commit()
+        session.refresh(row)
+        return jsonify({"downtime": downtime_public(row)})
+    finally:
+        session.close()
+
+
+@api.delete("/downtime/<int:downtime_id>")
+@admin_required
+def delete_downtime(downtime_id):
+    session = SessionLocal()
+    try:
+        row = session.query(Downtime).filter(Downtime.id == downtime_id).first()
+        if not row:
+            return jsonify({"error": "downtime not found"}), 404
+
+        session.delete(row)
+        session.commit()
+        return jsonify({"ok": True})
     finally:
         session.close()
 

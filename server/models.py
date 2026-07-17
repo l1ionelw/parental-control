@@ -11,7 +11,7 @@ Design notes (intentional):
     ignores them.
 """
 
-from sqlalchemy import Column, Integer, BigInteger, String, Text
+from sqlalchemy import Column, Integer, BigInteger, String, Text, Boolean
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -58,7 +58,7 @@ class Event(Base):
 class Application(Base):
     """A distinct executable. Manual dedup key is (exeName, fileDescription, path),
     where 'path' is normalized (drive letter and C:\\Users\\<name> replaced with
-    placeholders). 'allPaths' accumulates the raw real paths seen for telemetry."""
+    placeholders). 'allPaths' is a string repr of a list accumulating raw real paths for telemetry."""
 
     __tablename__ = "applications"
 
@@ -67,4 +67,34 @@ class Application(Base):
     exeName = Column(String(255), nullable=False)
     fileDescription = Column(String(512), nullable=False)
     path = Column(String(1024), nullable=False)         # normalized: {drive}\Users\{user}\...
-    allPaths = Column(Text, nullable=False, default="") # newline-delimited raw paths (parse to list)
+    allPaths = Column(Text, nullable=False, default="") # string repr of a list, e.g. '["path1", "path2"]'
+
+
+class AppLimit(Base):
+    """A per-device daily time budget for one application. Manual dedup key/upsert
+    key is (deviceUserID, appID) - admin-editable, viewable by anyone."""
+
+    __tablename__ = "appLimits"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    createdAt = Column(BigInteger, nullable=False)      # unix ms
+    updatedAt = Column(BigInteger, nullable=False)       # unix ms
+    deviceUserID = Column(Integer, nullable=False)      # -> deviceUser.id (no FK; manual lookup)
+    appID = Column(Integer, nullable=False)             # -> applications.id (no FK; manual lookup)
+    dailyLimitMinutes = Column(Integer, nullable=False) # minutes/day allowed; 0 = blocked
+
+
+class Downtime(Base):
+    """A daily recurring downtime window (e.g. bedtime) for one device. A device may
+    have several (e.g. a bedtime window and a separate school-hours window); rows
+    are addressed by id for edit/delete. Times are minutes-since-local-midnight (0-1439)."""
+
+    __tablename__ = "downtime"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    createdAt = Column(BigInteger, nullable=False)      # unix ms
+    updatedAt = Column(BigInteger, nullable=False)       # unix ms
+    deviceUserID = Column(Integer, nullable=False)      # -> deviceUser.id (no FK; manual lookup)
+    startMinute = Column(Integer, nullable=False)       # minutes since midnight, downtime start
+    endMinute = Column(Integer, nullable=False)         # minutes since midnight, downtime end
+    enabled = Column(Boolean, nullable=False, default=True)

@@ -38,6 +38,8 @@ namespace TrayApp
             Overlay.Start();
             WindowChangedListener.Start();
             ServerCommunicator.Start();
+            DowntimeEnforcer.Start();
+            ScreenTimeEnforcer.Start();
         }
 
         private void ShowServerConfig(object sender, EventArgs e)

@@ -60,4 +60,31 @@ export const api = {
   login: (username, password) =>
     request('/login', { method: 'POST', body: { username, password } }),
   devices: () => request('/devices', { auth: true }),
+  apps: () => request('/apps', { auth: true }),
+  screentime: (deviceUserId, startTime, endTime) =>
+    request(
+      `/screentime?deviceUserId=${deviceUserId}&startTime=${startTime}&endTime=${endTime}`,
+      { auth: true }
+    ),
+  limits: (deviceUserId) => request(`/limits?deviceUserId=${deviceUserId}`, { auth: true }),
+  setLimit: (deviceUserId, appId, dailyLimitMinutes) =>
+    request('/limits', {
+      method: 'PUT',
+      auth: true,
+      body: { deviceUserId, appId, dailyLimitMinutes },
+    }),
+  downtimes: (deviceUserId) => request(`/downtime?deviceUserId=${deviceUserId}`, { auth: true }),
+  addDowntime: (deviceUserId, startMinute, endMinute, enabled) =>
+    request('/downtime', {
+      method: 'POST',
+      auth: true,
+      body: { deviceUserId, startMinute, endMinute, enabled },
+    }),
+  updateDowntime: (id, startMinute, endMinute, enabled) =>
+    request(`/downtime/${id}`, {
+      method: 'PUT',
+      auth: true,
+      body: { startMinute, endMinute, enabled },
+    }),
+  deleteDowntime: (id) => request(`/downtime/${id}`, { method: 'DELETE', auth: true }),
 }

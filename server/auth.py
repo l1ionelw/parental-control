@@ -57,3 +57,17 @@ def login_required(fn):
         return fn(*args, **kwargs)
 
     return wrapper
+
+
+def admin_required(fn):
+    """Protect a route: requires a valid token (see login_required) AND that the
+    token's user type is "Administrator"."""
+
+    @login_required
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if g.user_type != "Administrator":
+            return jsonify({"error": "administrator access required"}), 403
+        return fn(*args, **kwargs)
+
+    return wrapper

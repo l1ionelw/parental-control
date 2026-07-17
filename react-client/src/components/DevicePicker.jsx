@@ -29,12 +29,12 @@ export default function DevicePicker({ devices, selectedId, onSelect }) {
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-3 h-16 pl-3 pr-4 rounded-2xl bg-white border border-black/[0.06] shadow-sm hover:shadow-md transition focus-ring"
+        className="w-full flex items-center gap-3 h-16 pl-3 pr-4 rounded-2xl bg-white dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] shadow-sm hover:shadow-md transition focus-ring"
       >
         <Avatar name={selected.deviceName} />
         <div className="flex-1 min-w-0 text-left">
-          <div className="font-semibold text-slate-900 truncate">{selected.deviceName}</div>
-          <div className="text-[0.82rem] text-slate-500 truncate flex items-center gap-1.5">
+          <div className="font-semibold text-slate-900 dark:text-slate-100 truncate">{selected.deviceName}</div>
+          <div className="text-[0.82rem] text-slate-500 dark:text-slate-400 truncate flex items-center gap-1.5">
             <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
             {selected.osUsername}
           </div>
@@ -45,7 +45,7 @@ export default function DevicePicker({ devices, selectedId, onSelect }) {
       </button>
 
       {open && (
-        <div className="anim-pop-in absolute z-20 mt-2 w-full rounded-2xl bg-white border border-black/[0.07] shadow-[0_24px_60px_-20px_rgba(15,18,34,0.28)] p-1.5 max-h-[320px] overflow-auto">
+        <div className="anim-pop-in absolute z-20 mt-2 w-full rounded-2xl bg-white dark:bg-slate-900 border border-black/[0.07] dark:border-white/[0.08] shadow-[0_24px_60px_-20px_rgba(15,18,34,0.28)] p-1.5 max-h-[320px] overflow-auto">
           {devices.map((d) => {
             const active = d.id === selected.id
             return (
@@ -57,17 +57,17 @@ export default function DevicePicker({ devices, selectedId, onSelect }) {
                   setOpen(false)
                 }}
                 className={`w-full flex items-center gap-3 p-2 rounded-xl text-left transition ${
-                  active ? 'bg-indigo-50' : 'hover:bg-slate-50'
+                  active ? 'bg-indigo-50 dark:bg-indigo-500/15' : 'hover:bg-slate-50 dark:hover:bg-white/[0.06]'
                 }`}
               >
                 <Avatar name={d.deviceName} small />
                 <div className="flex-1 min-w-0">
-                  <div className="font-medium text-slate-900 truncate text-[0.92rem]">
+                  <div className="font-medium text-slate-900 dark:text-slate-100 truncate text-[0.92rem]">
                     {d.deviceName}
                   </div>
-                  <div className="text-[0.8rem] text-slate-500 truncate">{d.osUsername}</div>
+                  <div className="text-[0.8rem] text-slate-500 dark:text-slate-400 truncate">{d.osUsername}</div>
                 </div>
-                {active && <Check width={18} height={18} className="text-indigo-600 shrink-0" />}
+                {active && <Check width={18} height={18} className="text-indigo-600 dark:text-indigo-400 shrink-0" />}
               </button>
             )
           })}

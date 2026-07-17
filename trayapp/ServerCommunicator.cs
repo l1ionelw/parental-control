@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.WebSockets;
 using System.Text;
@@ -21,6 +22,16 @@ namespace trayapp
         private static ClientWebSocket _ws;
         private static readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
         private static CancellationTokenSource _cts;
+
+        // True once the handshake has been sent on a live socket; other classes
+        // (DowntimeEnforcer, ScreenTimeEnforcer) poll this before requesting config.
+        private static volatile bool _isConnected;
+        public static bool IsConnected => _isConnected;
+
+        // Incoming message dispatch, keyed by the "type" field (see DispatchMessage).
+        private static readonly object _handlersLock = new object();
+        private static readonly Dictionary<string, Action<JsonElement>> _messageHandlers =
+            new Dictionary<string, Action<JsonElement>>();
 
         private static WindowChangedMessage? _pendingMessage;
         private static readonly object _pendingLock = new object();
@@ -57,8 +68,24 @@ namespace trayapp
 
         public static void Stop()
         {
+            _isConnected = false;
             _cts?.Cancel();
             try { _ws?.Abort(); } catch { }
+        }
+
+        // Lets other classes react to server-initiated messages without ServerCommunicator
+        // needing to know anything about them (see DowntimeEnforcer/ScreenTimeEnforcer).
+        public static void RegisterMessageHandler(string type, Action<JsonElement> handler)
+        {
+            lock (_handlersLock)
+            {
+                _messageHandlers[type] = handler;
+            }
+        }
+
+        public static Task<bool> SendRequest(object payload, CancellationToken token)
+        {
+            return TrySendJson(payload, token);
         }
 
         public static void Restart()
@@ -92,14 +119,20 @@ namespace trayapp
                 Logger.Log($"WS: Loaded persisted config: DeviceId={_deviceId}, UserId={_userId}");
             }
 
-            // Ensure device is registered (will skip if already have valid IDs)
-            if (!await EnsureDeviceRegistered(serverUrl, token))
-            {
-                Logger.Log("WS: Device registration failed, will retry on reconnect");
-            }
-
             while (!token.IsCancellationRequested)
             {
+                // Ensure we have valid credentials before connecting
+                if (_userId <= 0 || string.IsNullOrEmpty(_deviceId))
+                {
+                    if (!await EnsureDeviceRegistered(serverUrl, token))
+                    {
+                        Logger.Log("WS: Device registration failed, retrying in 5s");
+                        try { await Task.Delay(ReconnectDelay, token); }
+                        catch (TaskCanceledException) { break; }
+                        continue;
+                    }
+                }
+
                 try
                 {
                     _ws = new ClientWebSocket();
@@ -124,6 +157,7 @@ namespace trayapp
                 }
                 finally
                 {
+                    _isConnected = false;
                     _ws?.Dispose();
                     _ws = null;
                 }
@@ -215,11 +249,17 @@ try
                 username = _username
             };
             await SendJson(handshake, token);
+            _isConnected = true;
+
+            // Hardcoded for now - only two listeners exist. If more classes need to
+            // react to (re)connection, replace this with a small event/callback list.
+            _ = DowntimeEnforcer.ManualReload(token);
+            _ = ScreenTimeEnforcer.ManualReload(token);
         }
 
         private static async Task ReceiveLoop(CancellationToken token)
         {
-            var buffer = new byte[4096];
+            var buffer = new byte[16384];
             while (_ws.State == WebSocketState.Open && !token.IsCancellationRequested)
             {
                 var result = await _ws.ReceiveAsync(new ArraySegment<byte>(buffer), token);
@@ -229,6 +269,39 @@ try
                     Logger.Log("WS: server closed connection");
                     return;
                 }
+
+                if (result.MessageType == WebSocketMessageType.Text && result.Count > 0)
+                {
+                    string text = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    DispatchMessage(text);
+                }
+            }
+        }
+
+        private static void DispatchMessage(string json)
+        {
+            try
+            {
+                using (var doc = JsonDocument.Parse(json))
+                {
+                    if (!doc.RootElement.TryGetProperty("type", out var typeProp))
+                        return;
+
+                    string type = typeProp.GetString();
+                    Action<JsonElement> handler;
+                    lock (_handlersLock)
+                    {
+                        _messageHandlers.TryGetValue(type ?? "", out handler);
+                    }
+
+                    // Clone so the element outlives this JsonDocument (handlers may
+                    // process it asynchronously).
+                    handler?.Invoke(doc.RootElement.Clone());
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"WS: failed to parse incoming message - {ex.Message}");
             }
         }
 
@@ -262,11 +335,12 @@ try
 
         private static void SendOrQueue(WindowChangedMessage msg)
         {
+            var cts = _cts;
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    if (!await TrySendJson(msg, _cts?.Token ?? CancellationToken.None))
+                    if (!await TrySendJson(msg, cts?.Token ?? CancellationToken.None))
                     {
                         lock (_pendingLock)
                             _pendingMessage = msg;

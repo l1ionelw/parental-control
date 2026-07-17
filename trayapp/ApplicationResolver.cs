@@ -24,6 +24,10 @@ namespace trayapp
         {
             try
             {
+                // UWP apps report as ApplicationFrameHost.exe unless we look inside
+                // for their real hosted window (see ApplicationFrameHostResolver).
+                hwnd = ApplicationFrameHostResolver.ResolveRealWindow(hwnd);
+
                 GetWindowThreadProcessId(hwnd, out uint pid);
 
                 // ProcessName reads a system snapshot (no module access) so it is

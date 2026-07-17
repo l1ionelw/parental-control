@@ -24,7 +24,7 @@ export default function Logo({ size = 34, withWordmark = false }) {
         />
       </svg>
       {withWordmark && (
-        <span className="text-[1.25rem] font-bold tracking-tight text-slate-900">Parental Controls</span>
+        <span className="text-[1.25rem] font-bold tracking-tight text-slate-900 dark:text-slate-100">Parental Controls</span>
       )}
     </div>
   )

@@ -1,9 +1,12 @@
 import { useState } from 'react'
 import { api, setSession } from '../lib/api'
+import { useTheme } from '../lib/useTheme'
 import Logo from '../components/Logo'
+import ThemeToggle from '../components/ThemeToggle'
 import { Spinner } from '../components/Icons'
 
 export default function Auth({ onAuthed }) {
+  const [theme, toggleTheme] = useTheme()
   const [mode, setMode] = useState('login') // 'login' | 'register'
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -21,7 +24,7 @@ export default function Auth({ onAuthed }) {
       const fn = isRegister ? api.register : api.login
       const { token, user } = await fn(username.trim(), password)
       setSession(token, user)
-      onAuthed(user)
+      onAuthed()
     } catch (err) {
       setError(err.message)
     } finally {
@@ -35,23 +38,27 @@ export default function Auth({ onAuthed }) {
   }
 
   return (
-    <div className="min-h-full grid place-items-center px-5 py-10">
+    <div className="min-h-full grid place-items-center px-5 py-10 relative">
+      <div className="absolute top-5 right-5">
+        <ThemeToggle theme={theme} onToggle={toggleTheme} />
+      </div>
+
       <div className="w-full max-w-[400px] anim-float-in">
         <div className="flex flex-col items-center text-center mb-7">
           <Logo size={46} />
-<h1 className="mt-4 text-[1.7rem] font-bold tracking-tight text-slate-900">
+<h1 className="mt-4 text-[1.7rem] font-bold tracking-tight text-slate-900 dark:text-slate-100">
               {isRegister ? 'Create your Parental Controls' : 'Welcome back'}
             </h1>
-            <p className="mt-1.5 text-[0.95rem] text-slate-500">
+            <p className="mt-1.5 text-[0.95rem] text-slate-500 dark:text-slate-400">
               {isRegister
                 ? 'Parental controls, quietly handled.'
                 : 'Sign in to manage your family\'s devices.'}
             </p>
         </div>
 
-        <div className="rounded-[26px] bg-white/85 backdrop-blur border border-black/[0.06] shadow-[0_20px_50px_-24px_rgba(79,70,229,0.35)] p-6 sm:p-7">
+        <div className="rounded-[26px] bg-white/85 dark:bg-slate-900/70 backdrop-blur border border-black/[0.06] dark:border-white/[0.08] shadow-[0_20px_50px_-24px_rgba(79,70,229,0.35)] p-6 sm:p-7">
           {/* Segmented mode toggle */}
-          <div className="grid grid-cols-2 p-1 mb-6 rounded-2xl bg-slate-100">
+          <div className="grid grid-cols-2 p-1 mb-6 rounded-2xl bg-slate-100 dark:bg-white/[0.06]">
             {['login', 'register'].map((m) => (
               <button
                 key={m}
@@ -59,8 +66,8 @@ export default function Auth({ onAuthed }) {
                 onClick={() => switchMode(m)}
                 className={`h-9 rounded-xl text-sm font-semibold transition-all focus-ring ${
                   mode === m
-                    ? 'bg-white text-slate-900 shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
+                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                 }`}
               >
                 {m === 'login' ? 'Sign in' : 'Sign up'}
@@ -77,7 +84,7 @@ export default function Auth({ onAuthed }) {
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="you@family"
                 required
-                className="w-full h-11 px-3.5 rounded-xl bg-slate-50 border border-slate-200 text-[0.95rem] text-slate-900 placeholder:text-slate-400 focus-ring transition"
+                className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-white/[0.06] border border-slate-200 dark:border-white/[0.08] text-[0.95rem] text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus-ring transition"
               />
             </Field>
 
@@ -89,12 +96,12 @@ export default function Auth({ onAuthed }) {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
                 required
-                className="w-full h-11 px-3.5 rounded-xl bg-slate-50 border border-slate-200 text-[0.95rem] text-slate-900 placeholder:text-slate-400 focus-ring transition"
+                className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-white/[0.06] border border-slate-200 dark:border-white/[0.08] text-[0.95rem] text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus-ring transition"
               />
             </Field>
 
             {error && (
-              <div className="anim-pop-in text-[0.85rem] font-medium text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-3.5 py-2.5">
+              <div className="anim-pop-in text-[0.85rem] font-medium text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-500/10 border border-rose-100 dark:border-rose-500/20 rounded-xl px-3.5 py-2.5">
                 {error}
               </div>
             )}
@@ -110,11 +117,11 @@ export default function Auth({ onAuthed }) {
           </form>
         </div>
 
-        <p className="mt-5 text-center text-[0.85rem] text-slate-500">
+        <p className="mt-5 text-center text-[0.85rem] text-slate-500 dark:text-slate-400">
           {isRegister ? 'Already have an account?' : 'New to Parental Controls?'}{' '}
           <button
             onClick={() => switchMode(isRegister ? 'login' : 'register')}
-            className="font-semibold text-indigo-600 hover:text-indigo-700 focus-ring rounded"
+            className="font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 focus-ring rounded"
           >
             {isRegister ? 'Sign in' : 'Create one'}
           </button>
@@ -127,7 +134,7 @@ export default function Auth({ onAuthed }) {
 function Field({ label, children }) {
   return (
     <label className="flex flex-col gap-1.5">
-      <span className="text-[0.8rem] font-semibold text-slate-600 pl-0.5">{label}</span>
+      <span className="text-[0.8rem] font-semibold text-slate-600 dark:text-slate-400 pl-0.5">{label}</span>
       {children}
     </label>
   )

@@ -79,9 +79,12 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="ConfigManager.cs" />
+    <Compile Include="ApplicationFrameHostResolver.cs" />
     <Compile Include="ApplicationResolver.cs" />
     <Compile Include="AppContext.cs" />
     <Compile Include="DeviceInfo.cs" />
+    <Compile Include="DowntimeEnforcer.cs" />
+    <Compile Include="ScreenTimeEnforcer.cs" />
     <Compile Include="ServerCommunicator.cs" />
     <Compile Include="Logger.cs" />
     <Compile Include="Overlay.cs">
@@ -95,6 +98,8 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Structs\Application.cs" />
+    <Compile Include="Structs\AppLimit.cs" />
+    <Compile Include="Structs\DowntimeWindow.cs" />
     <Compile Include="Structs\WindowChangedMessage.cs" />
     <Compile Include="WindowChangedListener.cs" />
   </ItemGroup>
