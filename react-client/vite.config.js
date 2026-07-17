@@ -2,13 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// The Flask server (websocket + /api) runs on 5002. Proxy /api there so the
-// frontend can call it same-origin in dev (no CORS needed).
+// No dev proxy: the server URL is entered explicitly at runtime (see
+// ApiUrlSetup.jsx / lib/apiConfig.js) and requests go straight to it, cross-origin
+// - identical behavior in dev and in any deployment. The Flask server needs CORS
+// enabled for this (see server/server.py).
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  server: {
-    proxy: {
-      '/api': 'http://127.0.0.1:5002',
-    },
-  },
 })

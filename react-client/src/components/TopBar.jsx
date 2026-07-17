@@ -8,11 +8,14 @@ const NAV_ITEMS = [
   { to: '/apps', label: 'Apps' },
   { to: '/screentime', label: 'Screen Time' },
   { to: '/limits', label: 'Limits' },
+  // Admin-only: the viewer websocket handshake rejects non-admin tokens outright.
+  { to: '/screenshare', label: 'Screen Share', adminOnly: true },
 ]
 
 export default function TopBar({ user, theme, onToggleTheme, onLogout }) {
   const { pathname } = useLocation()
   const isAdmin = user?.type === 'Administrator'
+  const navItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin)
 
   return (
     <header className="sticky top-0 z-10 backdrop-blur bg-white/70 dark:bg-slate-950/70 border-b border-black/[0.05] dark:border-white/[0.06]">
@@ -45,7 +48,7 @@ export default function TopBar({ user, theme, onToggleTheme, onLogout }) {
         </div>
       </div>
       <nav className="max-w-[680px] mx-auto px-5 pb-2.5 -mt-1 flex items-center gap-1 overflow-x-auto no-scrollbar">
-        {NAV_ITEMS.map((item) => (
+        {navItems.map((item) => (
           <NavLink key={item.to} to={item.to} active={pathname === item.to}>
             {item.label}
           </NavLink>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { api, setSession } from '../lib/api'
+import { clearApiUrl, getApiUrl } from '../lib/apiConfig'
 import { useTheme } from '../lib/useTheme'
 import Logo from '../components/Logo'
 import ThemeToggle from '../components/ThemeToggle'
@@ -35,6 +36,11 @@ export default function Auth({ onAuthed }) {
   function switchMode(next) {
     setMode(next)
     setError('')
+  }
+
+  function changeServer() {
+    clearApiUrl()
+    window.location.reload()
   }
 
   return (
@@ -124,6 +130,16 @@ export default function Auth({ onAuthed }) {
             className="font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 focus-ring rounded"
           >
             {isRegister ? 'Sign in' : 'Create one'}
+          </button>
+        </p>
+
+        <p className="mt-2 text-center text-[0.78rem] text-slate-400 dark:text-slate-500">
+          Server: <span className="font-medium">{getApiUrl()}</span>{' '}
+          <button
+            onClick={changeServer}
+            className="font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 focus-ring rounded"
+          >
+            Change
           </button>
         </p>
       </div>

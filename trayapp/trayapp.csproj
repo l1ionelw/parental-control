@@ -102,6 +102,7 @@
     <Compile Include="Structs\AppLimit.cs" />
     <Compile Include="Structs\DowntimeWindow.cs" />
     <Compile Include="Structs\WindowChangedMessage.cs" />
+    <Compile Include="VideoShare.cs" />
     <Compile Include="WindowChangedListener.cs" />
   </ItemGroup>
   <ItemGroup>

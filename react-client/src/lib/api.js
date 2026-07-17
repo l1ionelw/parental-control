@@ -1,7 +1,10 @@
-// Thin API client. Talks to the Flask /api blueprint (proxied by Vite in dev).
+// Thin API client. Talks to the Flask /api blueprint at whatever server URL was
+// configured in ApiUrlSetup - same behavior in dev and in any deployment, no
+// proxy or same-origin assumption.
 // The JWT + user are persisted in localStorage so a refresh keeps you signed in.
 
-const BASE = '/api'
+import { getApiUrl } from './apiConfig'
+
 const TOKEN_KEY = 'haven_token'
 const USER_KEY = 'haven_user'
 
@@ -36,13 +39,13 @@ async function request(path, { method = 'GET', body, auth = false } = {}) {
 
   let res
   try {
-    res = await fetch(BASE + path, {
+    res = await fetch(getApiUrl() + '/api' + path, {
       method,
       headers,
       body: body ? JSON.stringify(body) : undefined,
     })
   } catch {
-    throw new Error('Cannot reach the server. Is it running on port 5002?')
+    throw new Error('Cannot reach the server. Check the server URL in settings.')
   }
 
   const data = await res.json().catch(() => ({}))

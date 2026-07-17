@@ -3,6 +3,7 @@ import DevicesPage from './screens/DevicesPage'
 import AppsPage from './screens/AppsPage'
 import ScreenTimePage from './screens/ScreenTimePage'
 import LimitsPage from './screens/LimitsPage'
+import ScreenSharePage from './screens/ScreenSharePage'
 
 // Auth is gated in main.jsx (renders <Auth/> instead of this router at all when
 // there's no token), so every route here can assume it's already authenticated.
@@ -12,5 +13,6 @@ export const router = createBrowserRouter([
   { path: '/apps', Component: AppsPage },
   { path: '/screentime', Component: ScreenTimePage },
   { path: '/limits', Component: LimitsPage },
+  { path: '/screenshare', Component: ScreenSharePage },
   { path: '*', element: <Navigate to="/devices" replace /> },
 ])

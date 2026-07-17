@@ -18,8 +18,16 @@ from flask import Blueprint, request, jsonify, g
 from db import SessionLocal
 from models import User, DeviceUser, Application, Event, AppLimit, Downtime
 from auth import create_jwt_token, login_required, admin_required
+import streaming
 
 api = Blueprint("api", __name__)
+
+
+@api.get("/health")
+def health():
+    """Unauthenticated - just lets a client check the server is reachable before
+    committing to a URL (see react-client ApiUrlSetup.jsx)."""
+    return jsonify({"status": "ok"})
 
 
 def now_ms():
@@ -37,6 +45,7 @@ def device_public(d):
         "osUsername": d.osUsername,
         "deviceID": d.deviceID,
         "createdAt": d.createdAt,
+        "isActive": streaming.is_trayapp_connected(d.id),
     }
 
 
