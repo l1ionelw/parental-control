@@ -40,6 +40,7 @@ namespace TrayApp
             ServerCommunicator.Start();
             DowntimeEnforcer.Start();
             ScreenTimeEnforcer.Start();
+            PreviousAppUsedTracker.Start();
         }
 
         private void ShowServerConfig(object sender, EventArgs e)

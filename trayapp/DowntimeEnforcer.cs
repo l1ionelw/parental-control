@@ -20,6 +20,11 @@ namespace trayapp
         private static bool _isInDowntime;
         private static CancellationTokenSource _cts;
 
+        // Separate from _cts: the per-minute enforcement check only runs while
+        // connected (see Activate/Deactivate), independent of the reload loop's
+        // lifetime, which runs for as long as the app is running.
+        private static CancellationTokenSource _enforcementCts;
+
         public static void Start()
         {
             Logger.Log("DowntimeEnforcer: starting");
@@ -28,12 +33,38 @@ namespace trayapp
             ServerCommunicator.RegisterMessageHandler("downtime", OnDowntimeMessage);
 
             _ = Task.Run(() => ReloadLoop(_cts.Token));
-            _ = Task.Run(() => EnforcementLoop(_cts.Token));
         }
 
         public static void Stop()
         {
             _cts?.Cancel();
+            _enforcementCts?.Cancel();
+        }
+
+        // Called by ServerCommunicator once the server connection (re)establishes -
+        // starts the per-minute downtime check. No-op if already running.
+        public static void Activate()
+        {
+            if (_enforcementCts != null && !_enforcementCts.IsCancellationRequested)
+                return;
+
+            Logger.Log("DowntimeEnforcer: activating");
+            _enforcementCts = new CancellationTokenSource();
+            _ = Task.Run(() => EnforcementLoop(_enforcementCts.Token));
+        }
+
+        // Called by ServerCommunicator when the server connection drops - stops the
+        // per-minute check and clears synced state, since it may now be stale.
+        public static void Deactivate()
+        {
+            Logger.Log("DowntimeEnforcer: deactivating, clearing downtime state");
+            _enforcementCts?.Cancel();
+
+            lock (_lock)
+            {
+                _downtimes = new List<DowntimeWindow>();
+                _isInDowntime = false;
+            }
         }
 
         public static List<DowntimeWindow> GetDowntimes()

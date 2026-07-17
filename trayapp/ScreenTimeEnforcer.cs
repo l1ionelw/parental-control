@@ -13,6 +13,7 @@ namespace trayapp
     internal static class ScreenTimeEnforcer
     {
         private const int ConfigurationReloadSeconds = 20; // 5 minutes
+        private const int EnforcementCheckSeconds = 60; // check the focused app once a minute
 
         private static readonly object _lock = new object();
         private static List<AppLimit> _appLimits = new List<AppLimit>();
@@ -22,6 +23,11 @@ namespace trayapp
         private static HashSet<string> _exceededApps =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static CancellationTokenSource _cts;
+
+        // Separate from _cts: the per-minute "is the focused app over its limit"
+        // check only runs while connected (see Activate/Deactivate), independent of
+        // the reload loop's lifetime, which runs for as long as the app is running.
+        private static CancellationTokenSource _enforcementCts;
 
         public static void Start()
         {
@@ -37,6 +43,62 @@ namespace trayapp
         public static void Stop()
         {
             _cts?.Cancel();
+            _enforcementCts?.Cancel();
+        }
+
+        // Called by ServerCommunicator once the server connection (re)establishes -
+        // starts the per-minute "is the focused app over its limit" check. No-op if
+        // already running.
+        public static void Activate()
+        {
+            if (_enforcementCts != null && !_enforcementCts.IsCancellationRequested)
+                return;
+
+            Logger.Log("ScreenTimeEnforcer: activating");
+            _enforcementCts = new CancellationTokenSource();
+            _ = Task.Run(() => EnforcementLoop(_enforcementCts.Token));
+        }
+
+        // Called by ServerCommunicator when the server connection drops - stops the
+        // per-minute check and clears synced state, since it may now be stale.
+        public static void Deactivate()
+        {
+            Logger.Log("ScreenTimeEnforcer: deactivating, clearing app limit state");
+            _enforcementCts?.Cancel();
+
+            lock (_lock)
+            {
+                _appLimits = new List<AppLimit>();
+                _appUsageSeconds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                _exceededApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        // Called by PreviousAppUsedTracker for every completed app session. Syncs
+        // the finished session's duration onto today's usage for the *previous*
+        // app, then checks the *current* (just switched-to) app against its limit -
+        // not the previous one, which only feeds the usage tally here.
+        public static void ReportAppSession(Application previous, long startTime, long endTime)
+        {
+            if (!ServerCommunicator.IsConnected)
+                return;
+
+            if (!string.IsNullOrEmpty(previous.exeName))
+            {
+                int usedSeconds = (int)((endTime - startTime) / 1000);
+                if (usedSeconds > 0)
+                {
+                    lock (_lock)
+                    {
+                        _appUsageSeconds.TryGetValue(previous.exeName, out int existingSeconds);
+                        _appUsageSeconds[previous.exeName] = existingSeconds + usedSeconds;
+                    }
+
+                    RecomputeExceeded();
+                }
+            }
+
+            CheckCurrentAppLimit();
         }
 
         public static List<AppLimit> GetAppLimits()
@@ -91,6 +153,30 @@ namespace trayapp
 
             await ServerCommunicator.SendRequest(new { type = "get_app_limits" }, token);
             await ServerCommunicator.SendRequest(new { type = "get_app_usage" }, token);
+        }
+
+        private static async Task EnforcementLoop(CancellationToken token)
+        {
+            while (!token.IsCancellationRequested)
+            {
+                CheckCurrentAppLimit();
+
+                try { await Task.Delay(TimeSpan.FromSeconds(EnforcementCheckSeconds), token); }
+                catch (TaskCanceledException) { break; }
+            }
+        }
+
+        // Resolves whatever's focused right now (not the "previous" app from a
+        // session report) and logs if it's over its daily limit. No enforcement
+        // action exists yet - just the log line for now.
+        private static void CheckCurrentAppLimit()
+        {
+            Application current = WindowChangedListener.GetCurrentApplication();
+            if (string.IsNullOrEmpty(current.exeName))
+                return;
+
+            if (IsOverLimit(current.exeName))
+                Logger.Log($"ScreenTimeEnforcer: {current.exeName} is over its daily limit - should quit (not implemented yet)");
         }
 
         private static void OnAppLimitsMessage(JsonElement root)

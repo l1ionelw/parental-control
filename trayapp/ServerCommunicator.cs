@@ -14,7 +14,6 @@ namespace trayapp
     internal static class ServerCommunicator
     {
         private static readonly TimeSpan ReconnectDelay = TimeSpan.FromSeconds(5);
-        private static readonly long MinSessionMs = 1000;
 
         private static readonly JsonSerializerOptions JsonOptions =
             new JsonSerializerOptions { IncludeFields = true };
@@ -36,11 +35,6 @@ namespace trayapp
         private static WindowChangedMessage? _pendingMessage;
         private static readonly object _pendingLock = new object();
 
-        private static Application _currentApp;
-        private static long _currentStartMs;
-        private static bool _hasCurrent;
-        private static readonly object _sessionLock = new object();
-
         // Device registration info (populated after REST registration)
         private static string _deviceId;
         private static int _userId;
@@ -50,19 +44,6 @@ namespace trayapp
         {
             Logger.Log("AppWebSocketClient starting");
             _cts = new CancellationTokenSource();
-
-            IntPtr initial = WindowChangedListener.GetCurrentForegroundWindow();
-            if (initial != IntPtr.Zero)
-            {
-                lock (_sessionLock)
-                {
-                    _currentApp = ApplicationResolver.Resolve(initial);
-                    _currentStartMs = NowUnixMs();
-                    _hasCurrent = true;
-                }
-            }
-
-            WindowChangedListener.RegisterCallback(OnWindowChanged);
             _ = Task.Run(() => ConnectLoop(_cts.Token));
         }
 
@@ -158,6 +139,8 @@ namespace trayapp
                 finally
                 {
                     _isConnected = false;
+                    DowntimeEnforcer.Deactivate();
+                    ScreenTimeEnforcer.Deactivate();
                     _ws?.Dispose();
                     _ws = null;
                 }
@@ -253,6 +236,8 @@ try
 
             // Hardcoded for now - only two listeners exist. If more classes need to
             // react to (re)connection, replace this with a small event/callback list.
+            DowntimeEnforcer.Activate();
+            ScreenTimeEnforcer.Activate();
             _ = DowntimeEnforcer.ManualReload(token);
             _ = ScreenTimeEnforcer.ManualReload(token);
         }
@@ -305,32 +290,17 @@ try
             }
         }
 
-        private static void OnWindowChanged(IntPtr hwnd)
+        // Called by PreviousAppUsedTracker whenever a completed app session clears the
+        // debounce window - relays it to the server as a window_changed message.
+        public static void ReportAppSession(Application previous, long startTime, long endTime)
         {
-            long now = NowUnixMs();
-            Application switchedTo = ApplicationResolver.Resolve(hwnd);
-
-            WindowChangedMessage? toSend = null;
-            lock (_sessionLock)
+            SendOrQueue(new WindowChangedMessage
             {
-                if (_hasCurrent && now - _currentStartMs >= MinSessionMs)
-                {
-                    toSend = new WindowChangedMessage
-                    {
-                        type = "window_changed",
-                        startTime = _currentStartMs,
-                        endTime = now,
-                        previous = _currentApp
-                    };
-                }
-
-                _currentApp = switchedTo;
-                _currentStartMs = now;
-                _hasCurrent = true;
-            }
-
-            if (toSend.HasValue)
-                SendOrQueue(toSend.Value);
+                type = "window_changed",
+                startTime = startTime,
+                endTime = endTime,
+                previous = previous
+            });
         }
 
         private static void SendOrQueue(WindowChangedMessage msg)
@@ -351,11 +321,6 @@ try
                     Logger.Log($"WS: failed to send window_changed - {ex.Message}");
                 }
             });
-        }
-
-        private static long NowUnixMs()
-        {
-            return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         }
 
         private static async Task<bool> TrySendJson<T>(T payload, CancellationToken token)

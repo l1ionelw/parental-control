@@ -82,6 +82,7 @@
     <Compile Include="ApplicationFrameHostResolver.cs" />
     <Compile Include="ApplicationResolver.cs" />
     <Compile Include="AppContext.cs" />
+    <Compile Include="PreviousAppUsedTracker.cs" />
     <Compile Include="DeviceInfo.cs" />
     <Compile Include="DowntimeEnforcer.cs" />
     <Compile Include="ScreenTimeEnforcer.cs" />

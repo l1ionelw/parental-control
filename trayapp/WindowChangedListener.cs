@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using trayapp.Structs;
 using TrayApp;
 namespace trayapp
 {
@@ -59,6 +60,14 @@ namespace trayapp
         public static IntPtr GetCurrentForegroundWindow()
         {
             return GetForegroundWindow();
+        }
+
+        // Same resolution a window_changed event's app details go through (AFH
+        // unwrapping + exeName/fileDescription/path), but on demand - for callers
+        // that need "what's focused right now" without waiting for a switch event.
+        internal static Application GetCurrentApplication()
+        {
+            return ApplicationResolver.Resolve(GetForegroundWindow());
         }
         public static void RegisterCallback(Action<IntPtr> callback)
         {
