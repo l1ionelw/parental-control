@@ -15,9 +15,11 @@ import time
 
 from flask import Blueprint, request, jsonify, g
 
+from app_tracker import get_app_by_id
 from db import SessionLocal
-from models import User, DeviceUser, Application, Event, AppLimit, Downtime
+from models import User, DeviceUser, Application, Event, AppLimit, Downtime, BlockException
 from auth import create_jwt_token, login_required, admin_required
+import manual_block
 import streaming
 
 api = Blueprint("api", __name__)
@@ -373,6 +375,144 @@ def delete_downtime(downtime_id):
         row = session.query(Downtime).filter(Downtime.id == downtime_id).first()
         if not row:
             return jsonify({"error": "downtime not found"}), 404
+
+        session.delete(row)
+        session.commit()
+        return jsonify({"ok": True})
+    finally:
+        session.close()
+
+
+def _manual_block_public(device_user_id):
+    end_time = manual_block.get_end_time(device_user_id)
+    return {"blocked": end_time is not None, "endTime": end_time}
+
+
+def _push_manual_block(device_user_id):
+    """Tells the trayapp right away if it's currently connected - it also asks on
+    every (re)connect itself (see trayapp_ws.py get_manual_block), so a device
+    that's offline right now still picks this up the moment it reconnects."""
+    ws = streaming.get_trayapp_ws(device_user_id)
+    if ws is None:
+        return
+    payload = _manual_block_public(device_user_id)
+    payload["type"] = "manual_block"
+    try:
+        ws.send(json.dumps(payload))
+    except Exception:
+        pass
+
+
+@api.get("/manual-block")
+@login_required
+def get_manual_block():
+    """Viewable by any signed-in user; only admins may change it (see below)."""
+    device_user_id = request.args.get("deviceUserId", type=int)
+    if device_user_id is None:
+        return jsonify({"error": "deviceUserId is required"}), 400
+
+    return jsonify(_manual_block_public(device_user_id))
+
+
+@api.post("/manual-block")
+@admin_required
+def set_manual_block():
+    data = request.get_json(silent=True) or {}
+    device_user_id = data.get("deviceUserId")
+    minutes = data.get("minutes")
+
+    if device_user_id is None or minutes is None:
+        return jsonify({"error": "deviceUserId and minutes are required"}), 400
+    if not isinstance(minutes, (int, float)) or minutes <= 0:
+        return jsonify({"error": "minutes must be a positive number"}), 400
+
+    end_time_ms = now_ms() + int(minutes * 60 * 1000)
+    manual_block.set_block(device_user_id, end_time_ms)
+    _push_manual_block(device_user_id)
+
+    return jsonify(_manual_block_public(device_user_id))
+
+
+@api.delete("/manual-block")
+@admin_required
+def delete_manual_block():
+    device_user_id = request.args.get("deviceUserId", type=int)
+    if device_user_id is None:
+        return jsonify({"error": "deviceUserId is required"}), 400
+
+    manual_block.clear_block(device_user_id)
+    _push_manual_block(device_user_id)
+
+    return jsonify(_manual_block_public(device_user_id))
+
+
+def block_exception_public(row, app):
+    return {
+        "id": row.id,
+        "deviceUserId": row.deviceUserID,
+        "appId": row.appID,
+        "exeName": app.exeName if app else None,
+        "fileDescription": app.fileDescription if app else None,
+    }
+
+
+@api.get("/block-exceptions")
+@login_required
+def get_block_exceptions():
+    """Viewable by any signed-in user; only admins may change them (see below).
+    Apps in this list are exempt from every enforcement (downtime, screen-time
+    limit, manual block) - synced by the trayapp on connect (see AlwaysAllowedApps.cs)."""
+    device_user_id = request.args.get("deviceUserId", type=int)
+    if device_user_id is None:
+        return jsonify({"error": "deviceUserId is required"}), 400
+
+    session = SessionLocal()
+    try:
+        rows = session.query(BlockException).filter(BlockException.deviceUserID == device_user_id).all()
+        return jsonify({
+            "exceptions": [block_exception_public(row, get_app_by_id(row.appID)) for row in rows]
+        })
+    finally:
+        session.close()
+
+
+@api.post("/block-exceptions")
+@admin_required
+def create_block_exception():
+    data = request.get_json(silent=True) or {}
+    device_user_id = data.get("deviceUserId")
+    app_id = data.get("appId")
+
+    if device_user_id is None or app_id is None:
+        return jsonify({"error": "deviceUserId and appId are required"}), 400
+
+    session = SessionLocal()
+    try:
+        existing = (
+            session.query(BlockException)
+            .filter(BlockException.deviceUserID == device_user_id, BlockException.appID == app_id)
+            .first()
+        )
+        if existing:
+            return jsonify({"exception": block_exception_public(existing, get_app_by_id(app_id))})
+
+        row = BlockException(createdAt=now_ms(), deviceUserID=device_user_id, appID=app_id)
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return jsonify({"exception": block_exception_public(row, get_app_by_id(app_id))}), 201
+    finally:
+        session.close()
+
+
+@api.delete("/block-exceptions/<int:exception_id>")
+@admin_required
+def delete_block_exception(exception_id):
+    session = SessionLocal()
+    try:
+        row = session.query(BlockException).filter(BlockException.id == exception_id).first()
+        if not row:
+            return jsonify({"error": "block exception not found"}), 404
 
         session.delete(row)
         session.commit()

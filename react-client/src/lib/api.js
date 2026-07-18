@@ -90,4 +90,22 @@ export const api = {
       body: { startMinute, endMinute, enabled },
     }),
   deleteDowntime: (id) => request(`/downtime/${id}`, { method: 'DELETE', auth: true }),
+  manualBlock: (deviceUserId) => request(`/manual-block?deviceUserId=${deviceUserId}`, { auth: true }),
+  setManualBlock: (deviceUserId, minutes) =>
+    request('/manual-block', {
+      method: 'POST',
+      auth: true,
+      body: { deviceUserId, minutes },
+    }),
+  clearManualBlock: (deviceUserId) =>
+    request(`/manual-block?deviceUserId=${deviceUserId}`, { method: 'DELETE', auth: true }),
+  blockExceptions: (deviceUserId) =>
+    request(`/block-exceptions?deviceUserId=${deviceUserId}`, { auth: true }),
+  addBlockException: (deviceUserId, appId) =>
+    request('/block-exceptions', {
+      method: 'POST',
+      auth: true,
+      body: { deviceUserId, appId },
+    }),
+  removeBlockException: (id) => request(`/block-exceptions/${id}`, { method: 'DELETE', auth: true }),
 }

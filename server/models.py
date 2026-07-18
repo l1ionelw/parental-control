@@ -98,3 +98,16 @@ class Downtime(Base):
     startMinute = Column(Integer, nullable=False)       # minutes since midnight, downtime start
     endMinute = Column(Integer, nullable=False)         # minutes since midnight, downtime end
     enabled = Column(Boolean, nullable=False, default=True)
+
+
+class BlockException(Base):
+    """An app that no enforcement (downtime, screen-time limit, or manual block) is
+    allowed to terminate on this device - e.g. the trayapp itself, or anything an
+    admin explicitly exempts. Manual dedup key is (deviceUserID, appID)."""
+
+    __tablename__ = "blockExceptions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    createdAt = Column(BigInteger, nullable=False)      # unix ms
+    deviceUserID = Column(Integer, nullable=False)      # -> deviceUser.id (no FK; manual lookup)
+    appID = Column(Integer, nullable=False)             # -> applications.id (no FK; manual lookup)

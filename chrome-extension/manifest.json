@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Switch API Debug Log",
+  "version": "0.1.0",
+  "description": "Debug-only extension: logs chrome.tabs.onActivated (tab switch) and active-tab URL change events to a persistent log page. Not wired into the main app - just for exploring the API.",
+  "permissions": ["tabs", "storage"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Open Tab Switch Debug Log"
+  }
+}

@@ -1,0 +1,131 @@
+:root {
+  color-scheme: light dark;
+  --border: rgba(0, 0, 0, 0.1);
+  --muted: #6b7280;
+  --bg-card: #fff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --border: rgba(255, 255, 255, 0.12);
+    --muted: #9ca3af;
+    --bg-card: #1c1c22;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 24px;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: light-dark(#f6f6fa, #0b0c11);
+  color: light-dark(#0f1222, #eef0f7);
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+h1 {
+  font-size: 1.3rem;
+  margin: 0;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.count {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+button {
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  cursor: pointer;
+}
+
+button:hover {
+  background: light-dark(#f0f0f5, #26262e);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 12px 0 20px;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.event {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-card);
+  padding: 14px 16px;
+}
+
+.event-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  color: #fff;
+}
+
+.badge.tab_switch { background: #6366f1; }
+.badge.tab_url_changed { background: #0891b2; }
+
+.timestamp {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+pre {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: light-dark(#f6f6fa, #14141a);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 40px 0;
+}

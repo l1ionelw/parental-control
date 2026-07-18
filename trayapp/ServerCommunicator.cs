@@ -49,6 +49,8 @@ namespace trayapp
             RegisterMessageHandler("stop_stream", _ => VideoShare.StopCapture());
             VideoShare.SetFrameCallback(SendStreamFrame);
 
+            RegisterMessageHandler("manual_block", OnManualBlockMessage);
+
             _ = Task.Run(() => ConnectLoop(_cts.Token));
         }
 
@@ -156,6 +158,7 @@ namespace trayapp
                     _isConnected = false;
                     DowntimeEnforcer.Deactivate();
                     ScreenTimeEnforcer.Deactivate();
+                    AlwaysAllowedApps.Deactivate();
                     VideoShare.StopCapture();
                     _ws?.Dispose();
                     _ws = null;
@@ -256,6 +259,28 @@ try
             ScreenTimeEnforcer.Activate();
             _ = DowntimeEnforcer.ManualReload(token);
             _ = ScreenTimeEnforcer.ManualReload(token);
+            AlwaysAllowedApps.ManualReload();
+
+            // Manual block is server-authoritative and not deactivated on
+            // disconnect (see ManualBlockEnforcer) - just re-synced on every
+            // (re)connect, same as the config syncs above.
+            _ = SendRequest(new { type = "get_manual_block" }, token);
+        }
+
+        private static void OnManualBlockMessage(JsonElement root)
+        {
+            bool blocked = root.TryGetProperty("blocked", out var blockedProp) && blockedProp.GetBoolean();
+            if (!blocked)
+            {
+                ManualBlockEnforcer.Stop();
+                return;
+            }
+
+            long? endTime = null;
+            if (root.TryGetProperty("endTime", out var endTimeProp) && endTimeProp.ValueKind == JsonValueKind.Number)
+                endTime = endTimeProp.GetInt64();
+
+            ManualBlockEnforcer.Start(endTime);
         }
 
         private static async Task ReceiveLoop(CancellationToken token)

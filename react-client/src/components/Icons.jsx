@@ -83,6 +83,11 @@ export const Maximize = (p) => (
     <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" />
   </svg>
 )
+export const Ban = (p) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="9" /><path d="m5.5 5.5 13 13" />
+  </svg>
+)
 export const Minimize = (p) => (
   <svg {...base} {...p}>
     <path d="M9 3v3a2 2 0 0 1-2 2H4M21 9h-3a2 2 0 0 1-2-2V4M3 15h3a2 2 0 0 1 2 2v3M15 21v-3a2 2 0 0 1 2-2h3" />

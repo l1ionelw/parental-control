@@ -129,11 +129,13 @@ namespace trayapp
 
             int nowMinute = DateTime.Now.Hour * 60 + DateTime.Now.Minute;
             bool inDowntime = false;
+            int remainingMinutes = 0;
             foreach (var window in downtimes)
             {
                 if (window.enabled && IsMinuteInWindow(nowMinute, window.startMinute, window.endMinute))
                 {
                     inDowntime = true;
+                    remainingMinutes = MinutesUntil(nowMinute, window.endMinute);
                     break;
                 }
             }
@@ -147,6 +149,24 @@ namespace trayapp
 
             if (changed)
                 Logger.Log(inDowntime ? "DowntimeEnforcer: entering downtime" : "DowntimeEnforcer: exiting downtime");
+
+            // Every check while still in downtime, not just on the transition -
+            // whatever's focused right now might be a different app than what
+            // triggered the last check.
+            if (inDowntime)
+            {
+                string message = $"This app is blocked for {remainingMinutes} more minute(s) (downtime).";
+                ProcessTerminationManager.TerminateForegroundProcess(message);
+            }
+        }
+
+        // Minutes from now until endMinute, wrapping past midnight if needed.
+        private static int MinutesUntil(int nowMinute, int endMinute)
+        {
+            int diff = endMinute - nowMinute;
+            if (diff <= 0)
+                diff += 1440;
+            return diff;
         }
 
         // startMinute/endMinute are minutes-since-midnight (0-1439). A window can

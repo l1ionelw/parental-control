@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import DevicePicker from '../components/DevicePicker'
-import { AppsGrid, Calendar, ChevronDown, Lock, Plus, Spinner, Trash } from '../components/Icons'
+import { AppsGrid, Ban, Calendar, ChevronDown, Lock, Plus, Spinner, Trash } from '../components/Icons'
+
+const BLOCK_PRESETS = [
+  { label: '10m', minutes: 10 },
+  { label: '20m', minutes: 20 },
+  { label: '30m', minutes: 30 },
+  { label: '1h', minutes: 60 },
+  { label: '2h', minutes: 120 },
+  { label: '3h', minutes: 180 },
+  { label: '12h', minutes: 720 },
+  { label: '24h', minutes: 1440 },
+]
 
 function minutesToInputValue(totalMinutes) {
   const h = Math.floor(totalMinutes / 60)
@@ -38,6 +49,8 @@ export default function Limits({ devices, selectedId, onSelectDevice, user, onLo
   const [apps, setApps] = useState([])
   const [limits, setLimits] = useState([])
   const [downtimes, setDowntimes] = useState([])
+  const [manualBlock, setManualBlock] = useState(null)
+  const [exceptions, setExceptions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [openAppId, setOpenAppId] = useState(null)
@@ -70,13 +83,17 @@ export default function Limits({ devices, selectedId, onSelectDevice, user, onLo
     setError('')
     ;(async () => {
       try {
-        const [limitsRes, downtimeRes] = await Promise.all([
+        const [limitsRes, downtimeRes, manualBlockRes, exceptionsRes] = await Promise.all([
           api.limits(selectedId),
           api.downtimes(selectedId),
+          api.manualBlock(selectedId),
+          api.blockExceptions(selectedId),
         ])
         if (!alive) return
         setLimits(limitsRes.limits)
         setDowntimes(downtimeRes.downtimes)
+        setManualBlock(manualBlockRes)
+        setExceptions(exceptionsRes.exceptions)
       } catch (err) {
         if (!alive) return
         if (err.status === 401) return onLogout()
@@ -97,12 +114,38 @@ export default function Limits({ devices, selectedId, onSelectDevice, user, onLo
     return map
   }, [limits])
 
+  const exceptionByAppId = useMemo(() => {
+    const map = new Map()
+    for (const e of exceptions) map.set(e.appId, e)
+    return map
+  }, [exceptions])
+
+  // Always-allowed apps first, then apps with a daily limit set, then everything else.
+  const sortedApps = useMemo(() => {
+    function rank(app) {
+      if (exceptionByAppId.has(app.id)) return 0
+      if (limitByAppId.has(app.id)) return 1
+      return 2
+    }
+    return [...apps].sort((a, b) => rank(a) - rank(b))
+  }, [apps, exceptionByAppId, limitByAppId])
+
   async function saveLimit(appId, dailyLimitMinutes) {
     const { limit } = await api.setLimit(selectedId, appId, dailyLimitMinutes)
     setLimits((prev) => {
       const rest = prev.filter((l) => l.appId !== appId)
       return limit ? [...rest, limit] : rest
     })
+  }
+
+  async function addException(appId) {
+    const { exception } = await api.addBlockException(selectedId, appId)
+    setExceptions((prev) => [...prev.filter((e) => e.appId !== appId), exception])
+  }
+
+  async function removeException(id, appId) {
+    await api.removeBlockException(id)
+    setExceptions((prev) => prev.filter((e) => e.appId !== appId))
   }
 
   async function addDowntime(next) {
@@ -120,6 +163,16 @@ export default function Limits({ devices, selectedId, onSelectDevice, user, onLo
   async function removeDowntime(id) {
     await api.deleteDowntime(id)
     setDowntimes((prev) => prev.filter((d) => d.id !== id))
+  }
+
+  async function enableBlock(minutes) {
+    const status = await api.setManualBlock(selectedId, minutes)
+    setManualBlock(status)
+  }
+
+  async function disableBlock() {
+    const status = await api.clearManualBlock(selectedId)
+    setManualBlock(status)
   }
 
   return (
@@ -157,31 +210,43 @@ export default function Limits({ devices, selectedId, onSelectDevice, user, onLo
         <EmptyState text="Pick a device to see its limits." />
       ) : (
         <>
-          <DowntimeSection
-            downtimes={downtimes}
-            isAdmin={isAdmin}
-            onAdd={addDowntime}
-            onEdit={editDowntime}
-            onRemove={removeDowntime}
-          />
+          <div className="flex flex-col gap-4">
+            <ManualBlockCard
+              status={manualBlock}
+              isAdmin={isAdmin}
+              onEnable={enableBlock}
+              onDisable={disableBlock}
+            />
+            <DowntimeSection
+              downtimes={downtimes}
+              isAdmin={isAdmin}
+              onAdd={addDowntime}
+              onEdit={editDowntime}
+              onRemove={removeDowntime}
+            />
+          </div>
 
           <h3 className="mt-7 mb-3 text-[0.8rem] font-bold uppercase tracking-wide text-slate-400 pl-1">
             App limits
           </h3>
-          {apps.length === 0 ? (
+          {sortedApps.length === 0 ? (
             <EmptyState text="No applications tracked yet." />
           ) : (
             <div className="rounded-3xl bg-white dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] shadow-sm overflow-hidden">
-              {apps.map((app, i) => (
+              {sortedApps.map((app, i) => (
                 <AppLimitRow
                   key={app.id}
                   app={app}
                   limit={limitByAppId.get(app.id) || null}
+                  exception={exceptionByAppId.get(app.id) || null}
                   isAdmin={isAdmin}
                   open={openAppId === app.id}
                   onToggle={() => setOpenAppId((id) => (id === app.id ? null : app.id))}
                   onSave={(minutes) => saveLimit(app.id, minutes)}
-                  isLast={i === apps.length - 1}
+                  onToggleException={(exception) =>
+                    exception ? removeException(exception.id, app.id) : addException(app.id)
+                  }
+                  isLast={i === sortedApps.length - 1}
                 />
               ))}
             </div>
@@ -349,6 +414,92 @@ function DowntimeRow({ downtime, isAdmin, startInEdit, onSave, onRemove, onCance
   )
 }
 
+function ManualBlockCard({ status, isAdmin, onEnable, onDisable }) {
+  const [customHours, setCustomHours] = useState(0)
+  const [customMinutes, setCustomMinutes] = useState(30)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  const blocked = !!status?.blocked
+
+  async function run(action) {
+    setSaving(true)
+    setErr('')
+    try {
+      await action()
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="rounded-3xl bg-white dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] shadow-sm p-5 sm:p-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div
+            className={`w-9 h-9 grid place-items-center rounded-xl ${
+              blocked
+                ? 'bg-rose-50 dark:bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                : 'bg-indigo-50 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-400'
+            }`}
+          >
+            <Ban width={18} height={18} />
+          </div>
+          <div>
+            <div className="font-semibold text-slate-800 dark:text-slate-200">Manual block</div>
+            <div className="text-[0.82rem] text-slate-500 dark:text-slate-400">
+              {blocked ? `Blocked until ${new Date(status.endTime).toLocaleString()}` : 'Not blocked'}
+            </div>
+          </div>
+        </div>
+        {isAdmin && blocked && (
+          <button
+            onClick={() => run(onDisable)}
+            disabled={saving}
+            className="h-9 px-4 rounded-xl font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.06] text-[0.85rem] transition focus-ring disabled:opacity-70"
+          >
+            Unblock
+          </button>
+        )}
+      </div>
+
+      {isAdmin && (
+        <div className="mt-4 pt-4 border-t border-black/[0.05] dark:border-white/[0.08]">
+          <div className="flex flex-wrap gap-2">
+            {BLOCK_PRESETS.map((p) => (
+              <button
+                key={p.minutes}
+                onClick={() => run(() => onEnable(p.minutes))}
+                disabled={saving}
+                className="h-9 px-3.5 rounded-xl font-semibold text-[0.82rem] bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-white/[0.1] transition focus-ring disabled:opacity-50"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-end gap-3">
+            <NumberField label="Hours" value={customHours} max={999} onChange={setCustomHours} />
+            <NumberField label="Minutes" value={customMinutes} max={59} onChange={setCustomMinutes} />
+            <button
+              onClick={() => run(() => onEnable(customHours * 60 + customMinutes))}
+              disabled={saving || (customHours === 0 && customMinutes === 0)}
+              className="h-9 px-4 rounded-xl font-semibold text-white text-[0.85rem] bg-gradient-to-br from-rose-600 to-rose-500 transition active:scale-[0.98] disabled:opacity-50 focus-ring flex items-center gap-2"
+            >
+              {saving && <Spinner width={14} height={14} />}
+              Block for custom time
+            </button>
+          </div>
+
+          {err && <div className="mt-3 text-[0.82rem] font-medium text-rose-600 dark:text-rose-400">{err}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TimeField({ label, value, onChange }) {
   return (
     <label className="flex flex-col gap-1.5">
@@ -363,11 +514,14 @@ function TimeField({ label, value, onChange }) {
   )
 }
 
-function AppLimitRow({ app, limit, isAdmin, open, onToggle, onSave, isLast }) {
+function AppLimitRow({ app, limit, exception, isAdmin, open, onToggle, onSave, onToggleException, isLast }) {
   const [hours, setHours] = useState(0)
   const [minutes, setMinutes] = useState(0)
   const [saving, setSaving] = useState(false)
+  const [savingException, setSavingException] = useState(false)
   const [err, setErr] = useState('')
+
+  const alwaysAllowed = !!exception
 
   useEffect(() => {
     if (open) {
@@ -402,6 +556,18 @@ function AppLimitRow({ app, limit, isAdmin, open, onToggle, onSave, isLast }) {
     }
   }
 
+  async function toggleException() {
+    setSavingException(true)
+    setErr('')
+    try {
+      await onToggleException(exception)
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setSavingException(false)
+    }
+  }
+
   return (
     <div className={isLast ? '' : 'border-b border-black/[0.05] dark:border-white/[0.06]'}>
       <button
@@ -422,10 +588,14 @@ function AppLimitRow({ app, limit, isAdmin, open, onToggle, onSave, isLast }) {
         </div>
         <div
           className={`shrink-0 text-[0.82rem] font-semibold ${
-            limit ? 'text-slate-700 dark:text-slate-300' : 'text-slate-400'
+            alwaysAllowed
+              ? 'text-emerald-600 dark:text-emerald-400'
+              : limit
+              ? 'text-slate-700 dark:text-slate-300'
+              : 'text-slate-400'
           }`}
         >
-          {formatLimit(limit?.dailyLimitMinutes)}
+          {alwaysAllowed ? 'Always allowed' : formatLimit(limit?.dailyLimitMinutes)}
         </div>
         <ChevronDown
           width={16}
@@ -437,33 +607,52 @@ function AppLimitRow({ app, limit, isAdmin, open, onToggle, onSave, isLast }) {
       {open && (
         <div className="px-5 pb-4 anim-pop-in">
           {isAdmin ? (
-            <div className="flex flex-wrap items-end gap-3 pl-12">
-              <NumberField label="Hours" value={hours} max={23} onChange={setHours} />
-              <NumberField label="Minutes" value={minutes} max={59} onChange={setMinutes} />
+            <div className="pl-12">
+              <label className="flex items-center gap-2 text-[0.85rem] font-medium text-slate-700 dark:text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={alwaysAllowed}
+                  disabled={savingException}
+                  onChange={toggleException}
+                  className="w-4 h-4 accent-emerald-600"
+                />
+                Always allow (no downtime, limit, or block can stop this app)
+              </label>
 
-              {err && <div className="text-[0.8rem] font-medium text-rose-600 dark:text-rose-400 w-full">{err}</div>}
+              {!alwaysAllowed && (
+                <div className="mt-3 flex flex-wrap items-end gap-3">
+                  <NumberField label="Hours" value={hours} max={23} onChange={setHours} />
+                  <NumberField label="Minutes" value={minutes} max={59} onChange={setMinutes} />
 
-              <button
-                onClick={submit}
-                disabled={saving}
-                className="h-9 px-4 rounded-xl font-semibold text-white text-[0.85rem] bg-gradient-to-br from-violet-600 to-indigo-600 transition active:scale-[0.98] disabled:opacity-70 focus-ring flex items-center gap-2"
-              >
-                {saving && <Spinner width={14} height={14} />}
-                Save
-              </button>
-              {limit && (
-                <button
-                  onClick={clear}
-                  disabled={saving}
-                  className="h-9 px-4 rounded-xl font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.06] text-[0.85rem] transition focus-ring"
-                >
-                  Clear limit
-                </button>
+                  <button
+                    onClick={submit}
+                    disabled={saving}
+                    className="h-9 px-4 rounded-xl font-semibold text-white text-[0.85rem] bg-gradient-to-br from-violet-600 to-indigo-600 transition active:scale-[0.98] disabled:opacity-70 focus-ring flex items-center gap-2"
+                  >
+                    {saving && <Spinner width={14} height={14} />}
+                    Save
+                  </button>
+                  {limit && (
+                    <button
+                      onClick={clear}
+                      disabled={saving}
+                      className="h-9 px-4 rounded-xl font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.06] text-[0.85rem] transition focus-ring"
+                    >
+                      Clear limit
+                    </button>
+                  )}
+                </div>
               )}
+
+              {err && <div className="mt-3 text-[0.8rem] font-medium text-rose-600 dark:text-rose-400">{err}</div>}
             </div>
           ) : (
             <div className="pl-12 text-[0.85rem] text-slate-500 dark:text-slate-400">
-              {limit ? `${formatLimit(limit.dailyLimitMinutes)} set by an administrator.` : 'No limit set.'}
+              {alwaysAllowed
+                ? 'Always allowed - exempt from every block.'
+                : limit
+                ? `${formatLimit(limit.dailyLimitMinutes)} set by an administrator.`
+                : 'No limit set.'}
             </div>
           )}
         </div>

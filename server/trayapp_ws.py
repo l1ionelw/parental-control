@@ -10,7 +10,8 @@ import uuid
 
 from app_tracker import update_application_table, record_event, get_app_by_id
 from db import SessionLocal
-from models import DeviceUser, AppLimit, Downtime, Event
+from models import DeviceUser, AppLimit, Downtime, Event, BlockException
+import manual_block
 import streaming
 
 # (device_id, user_id) -> {"username": str, "connections": [ws_id, ...]}
@@ -136,6 +137,36 @@ def _build_app_usage_payload(device_user_id):
         # onto whatever baseline this gives it (see ScreenTimeEnforcer.ReportAppSession),
         # so an absent key and a 0 are equivalent here - no drift either way.
         return usage_seconds
+    finally:
+        session.close()
+
+
+def _build_block_exceptions_payload(device_user_id):
+    """Same shape as _build_app_limits_payload minus dailyLimitMinutes - these are
+    apps no enforcement may terminate, matched client-side by exeName."""
+    if device_user_id is None:
+        return []
+
+    session = SessionLocal()
+    try:
+        rows = session.query(BlockException).filter(BlockException.deviceUserID == device_user_id).all()
+        exceptions = []
+        for row in rows:
+            app = get_app_by_id(row.appID)
+            if app is None:
+                continue
+            try:
+                all_paths = json.loads(app.allPaths) if app.allPaths else []
+            except (json.JSONDecodeError, TypeError):
+                all_paths = []
+            exceptions.append({
+                "appId": row.appID,
+                "exeName": app.exeName,
+                "fileDescription": app.fileDescription,
+                "path": app.path,
+                "allPaths": all_paths,
+            })
+        return exceptions
     finally:
         session.close()
 
@@ -290,6 +321,13 @@ def handle(ws):
             elif msg_type == "get_app_usage":
                 usage = _build_app_usage_payload(device_user_id)
                 ws.send(json.dumps({"type": "app_usage", "usage": usage}))
+            elif msg_type == "get_manual_block":
+                blocked = device_user_id is not None and manual_block.is_blocked(device_user_id)
+                end_time = manual_block.get_end_time(device_user_id) if blocked else None
+                ws.send(json.dumps({"type": "manual_block", "blocked": blocked, "endTime": end_time}))
+            elif msg_type == "get_block_exceptions":
+                exceptions = _build_block_exceptions_payload(device_user_id)
+                ws.send(json.dumps({"type": "block_exceptions", "exceptions": exceptions}))
             elif msg_type == "stream_frame":
                 stream_frame_count = _handle_stream_frame(ws, device_user_id, data, stream_frame_count)
             elif not data:

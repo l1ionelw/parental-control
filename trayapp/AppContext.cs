@@ -40,6 +40,7 @@ namespace TrayApp
             ServerCommunicator.Start();
             DowntimeEnforcer.Start();
             ScreenTimeEnforcer.Start();
+            AlwaysAllowedApps.Start();
             PreviousAppUsedTracker.Start();
         }
 

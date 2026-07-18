@@ -167,8 +167,7 @@ namespace trayapp
         }
 
         // Resolves whatever's focused right now (not the "previous" app from a
-        // session report) and logs if it's over its daily limit. No enforcement
-        // action exists yet - just the log line for now.
+        // session report) and terminates it if it's over its daily limit.
         private static void CheckCurrentAppLimit()
         {
             Application current = WindowChangedListener.GetCurrentApplication();
@@ -176,7 +175,11 @@ namespace trayapp
                 return;
 
             if (IsOverLimit(current.exeName))
-                Logger.Log($"ScreenTimeEnforcer: {current.exeName} is over its daily limit - should quit (not implemented yet)");
+            {
+                Logger.Log($"ScreenTimeEnforcer: {current.exeName} is over its daily limit, terminating");
+                ProcessTerminationManager.TerminateForegroundProcess(
+                    $"{current.exeName} has reached its daily time limit. It will be available again tomorrow.");
+            }
         }
 
         private static void OnAppLimitsMessage(JsonElement root)
