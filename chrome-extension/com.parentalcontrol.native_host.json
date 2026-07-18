@@ -1,0 +1,9 @@
+{
+  "name": "com.parentalcontrol.native_host",
+  "description": "Parental Controls browser native host",
+  "path": "D:\\PC-Files\\Documents\\Github\\parental-control\\chrome-extension\\native-host.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://idichccgaifmnhanhmeaceekechpnmhb/"
+  ]
+}

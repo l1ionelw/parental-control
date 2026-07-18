@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Tab Switch API Debug Log</title>
+<link rel="stylesheet" href="debug.css" />
+</head>
+<body>
+  <header>
+    <h1>Tab Switch API Debug Log</h1>
+    <div class="actions">
+      <span id="count" class="count">0 events</span>
+      <button id="clear">Clear log</button>
+    </div>
+  </header>
+
+  <p class="hint">
+    Switch tabs, or navigate the active tab to a new URL, to generate events. Newest first.
+  </p>
+
+  <div id="list" class="list"></div>
+
+  <script src="debug.js"></script>
+</body>
+</html>

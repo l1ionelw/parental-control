@@ -1,16 +1,23 @@
 """WebSocket handler for tray-app connections: handshake/identity, window_changed
 event ingestion, config sync (app limits / downtime / app usage), and relaying
 screen-share frames to whichever admin viewers are watching this device.
+
+The same /ws endpoint and connection/identity registry below is also used by the
+chrome extension (same handshake shape, same (device_id, user_id) identity) - but
+its message handling (website_changed / website_heartbeat / get_open_website_session)
+lives in browser_ws.py, not here, since that logic isn't trayapp-specific.
 """
 
 import datetime
 import json
 import threading
+import time
 import uuid
 
 from app_tracker import update_application_table, record_event, get_app_by_id
 from db import SessionLocal
 from models import DeviceUser, AppLimit, Downtime, Event, BlockException
+import browser_ws
 import manual_block
 import streaming
 
@@ -36,6 +43,10 @@ def _lookup_device_user_id(device_id):
         return device_user.id if device_user else None
     finally:
         session.close()
+
+
+def _now_ms():
+    return int(time.time() * 1000)
 
 
 def _build_app_limits_payload(device_user_id):
@@ -312,6 +323,12 @@ def handle(ws):
 
             if msg_type == "window_changed":
                 _handle_window_changed(key, device_user_id, data)
+            elif msg_type == "website_changed":
+                browser_ws.handle_website_changed(device_user_id, data, f"{username}({user_id}) device={device_id[:16]}...")
+            elif msg_type == "website_heartbeat":
+                browser_ws.handle_website_heartbeat(device_user_id, data)
+            elif msg_type == "get_open_website_session":
+                browser_ws.handle_get_open_website_session(ws, device_user_id)
             elif msg_type == "get_app_limits":
                 limits = _build_app_limits_payload(device_user_id)
                 ws.send(json.dumps({"type": "app_limits", "limits": limits}))
@@ -341,6 +358,7 @@ def handle(ws):
         if device_user_id is not None:
             streaming.unregister_trayapp(device_user_id, ws)
 
+        last_connection_for_key = False
         if key:
             with registry_lock:
                 entry = client_registry.get(key)
@@ -348,6 +366,14 @@ def handle(ws):
                     entry["connections"].remove(ws_id)
                 if entry and not entry["connections"]:
                     client_registry.pop(key, None)
+                    last_connection_for_key = True
+
+        # Only finalize the open browser session once nothing is left connected
+        # under this identity - a trayapp and a browser extension connection can
+        # share the same (device_id, user_id) key, and the trayapp disconnecting
+        # shouldn't cut off a session the extension is still tracking.
+        if last_connection_for_key and device_user_id is not None:
+            browser_ws.close_open_session(device_user_id, _now_ms())
 
         with active_connections_lock:
             active_connections.pop(ws_id, None)

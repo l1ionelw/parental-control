@@ -111,3 +111,22 @@ class BlockException(Base):
     createdAt = Column(BigInteger, nullable=False)      # unix ms
     deviceUserID = Column(Integer, nullable=False)      # -> deviceUser.id (no FK; manual lookup)
     appID = Column(Integer, nullable=False)             # -> applications.id (no FK; manual lookup)
+
+
+class WebsiteEvent(Base):
+    """A finished browser focus session for one device-user on one tab/website.
+
+    Same shape as Event plus the tab's URL and title. Events are recorded by the
+    Chrome extension via the websocket and queried by day with midnight clamping,
+    just like app events.
+    """
+
+    __tablename__ = "websiteEvents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    createdAt = Column(BigInteger, nullable=False)      # unix ms (row insert time)
+    deviceUserID = Column(Integer, nullable=False)      # -> deviceUser.id (no FK; manual lookup)
+    startTime = Column(BigInteger, nullable=False)      # unix ms
+    endTime = Column(BigInteger, nullable=False)        # unix ms
+    tabUrl = Column(Text, nullable=False)
+    tabTitle = Column(Text, nullable=False)

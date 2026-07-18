@@ -17,7 +17,7 @@ from flask import Blueprint, request, jsonify, g
 
 from app_tracker import get_app_by_id
 from db import SessionLocal
-from models import User, DeviceUser, Application, Event, AppLimit, Downtime, BlockException
+from models import User, DeviceUser, Application, Event, AppLimit, Downtime, BlockException, WebsiteEvent
 from auth import create_jwt_token, login_required, admin_required
 import manual_block
 import streaming
@@ -184,6 +184,51 @@ def screentime():
                 "exeName": app.exeName if app else None,
                 "fileDescription": app.fileDescription if app else None,
             })
+
+        return jsonify({"events": events_json})
+    finally:
+        session.close()
+
+
+@api.get("/website-history")
+@login_required
+def website_history():
+    """Website events for one device-user overlapping [startTime, endTime].
+
+    Uses the same overlap+clamp approach as /api/screentime so a browser session
+    that started the previous day but ran into this range is credited only for
+    the portion inside the requested day. This lets the React client request a
+    single calendar day (local midnight -> next midnight) and get clean totals.
+    """
+    device_user_id = request.args.get("deviceUserId", type=int)
+    start_time = request.args.get("startTime", type=int)
+    end_time = request.args.get("endTime", type=int)
+
+    if device_user_id is None or start_time is None or end_time is None:
+        return jsonify({"error": "deviceUserId, startTime and endTime are required"}), 400
+
+    session = SessionLocal()
+    try:
+        events = (
+            session.query(WebsiteEvent)
+            .filter(
+                WebsiteEvent.deviceUserID == device_user_id,
+                WebsiteEvent.startTime <= end_time,
+                WebsiteEvent.endTime >= start_time,
+            )
+            .order_by(WebsiteEvent.startTime)
+            .all()
+        )
+
+        events_json = [
+            {
+                "startTime": max(e.startTime, start_time),
+                "endTime": min(e.endTime, end_time),
+                "tabUrl": e.tabUrl,
+                "tabTitle": e.tabTitle,
+            }
+            for e in events
+        ]
 
         return jsonify({"events": events_json})
     finally:

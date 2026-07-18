@@ -14,3 +14,6 @@ packages
 # SQLite database (created by `alembic upgrade head`)
 *.db
 server/parental_control.db
+
+# Chrome extension signing key (keeps extension ID stable across reloads)
+chrome-extension/extension-key.pem

@@ -41,6 +41,20 @@ export const Calendar = (p) => (
 export const Activity = (p) => (
   <svg {...base} {...p}><path d="M22 12h-4l-3 8-6-16-3 8H2" /></svg>
 )
+export const Globe = (p) => (
+  <svg {...base} {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z" />
+  </svg>
+)
+export const LayoutGrid = (p) => (
+  <svg {...base} {...p}>
+    <rect x="3" y="3" width="7" height="7" rx="1.5" />
+    <rect x="14" y="3" width="7" height="7" rx="1.5" />
+    <rect x="3" y="14" width="7" height="7" rx="1.5" />
+    <rect x="14" y="14" width="7" height="7" rx="1.5" />
+  </svg>
+)
 export const Monitor = (p) => (
   <svg {...base} {...p}>
     <rect x="2" y="3" width="20" height="14" rx="2.5" /><path d="M8 21h8M12 17v4" />

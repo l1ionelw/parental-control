@@ -69,6 +69,11 @@ export const api = {
       `/screentime?deviceUserId=${deviceUserId}&startTime=${startTime}&endTime=${endTime}`,
       { auth: true }
     ),
+  websiteHistory: (deviceUserId, startTime, endTime) =>
+    request(
+      `/website-history?deviceUserId=${deviceUserId}&startTime=${startTime}&endTime=${endTime}`,
+      { auth: true }
+    ),
   limits: (deviceUserId) => request(`/limits?deviceUserId=${deviceUserId}`, { auth: true }),
   setLimit: (deviceUserId, appId, dailyLimitMinutes) =>
     request('/limits', {

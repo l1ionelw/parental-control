@@ -1,13 +1,16 @@
 {
   "manifest_version": 3,
-  "name": "Tab Switch API Debug Log",
-  "version": "0.1.0",
-  "description": "Debug-only extension: logs chrome.tabs.onActivated (tab switch) and active-tab URL change events to a persistent log page. Not wired into the main app - just for exploring the API.",
-  "permissions": ["tabs", "storage"],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2qV90+gn8qlfXh7uB1hgkWiuKegrndTwL3bxDWneSBn2ASR+lU5ayukaSzH0qoEsIXsiemUu+dk6vC7RVTJuP7PxLeS/Nxsq8OH4zhRjzKx9iKHng3Zg1Fm3rE9ZSgCxpeKTdxssWSD7pvavhNYv8UUkNdfFw4XhGdfdlNhuAOzIJ/mhHDViAWbfWnuebs3FciHzHJzLNg8N2gyNj0JGAuHSznQt/w2pZknvSZw+Rngl+0HwWvFpcYMDK+AFEIijfTYE81+c5AwkpHilzt0DcltTrs5V07leZKt2VxOlX425W5ANnaWOgwyKxZaPN6sjBFnpGD4IZ/+cZCa2Gr6UNQIDAQAB",
+  "name": "Parental Controls - Browser Monitor",
+  "version": "0.2.0",
+  "description": "Reports active tab usage to the Parental Controls server via a native host that reads the trayapp config.",
+  "permissions": ["tabs", "storage", "nativeMessaging", "alarms"],
+  "host_permissions": ["http://*/*", "https://*/*"],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "action": {
-    "default_title": "Open Tab Switch Debug Log"
+    "default_title": "Parental Controls Browser Monitor"
   }
 }
