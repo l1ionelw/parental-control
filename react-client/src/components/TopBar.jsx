@@ -49,7 +49,11 @@ export default function TopBar({ user, theme, onToggleTheme, onLogout }) {
       </div>
       <nav className="max-w-[680px] mx-auto px-5 pb-2.5 -mt-1 flex items-center gap-1 overflow-x-auto no-scrollbar">
         {navItems.map((item) => (
-          <NavLink key={item.to} to={item.to} active={pathname === item.to}>
+          <NavLink
+            key={item.to}
+            to={item.to}
+            active={pathname === item.to || pathname.startsWith(`${item.to}/`)}
+          >
             {item.label}
           </NavLink>
         ))}

@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom'
 import DevicesPage from './screens/DevicesPage'
 import AppsPage from './screens/AppsPage'
 import ScreenTimePage from './screens/ScreenTimePage'
+import BrowserScreenTimePage from './screens/BrowserScreenTimePage'
 import LimitsPage from './screens/LimitsPage'
 import ScreenSharePage from './screens/ScreenSharePage'
 
@@ -11,7 +12,11 @@ export const router = createBrowserRouter([
   { path: '/', element: <Navigate to="/devices" replace /> },
   { path: '/devices', Component: DevicesPage },
   { path: '/apps', Component: AppsPage },
+  // App screen time and browser (tab) screen time are separate routes rather than
+  // client-side-only state, so each is directly linkable/bookmarkable and the
+  // home screen's tiles can point at one or the other.
   { path: '/screentime', Component: ScreenTimePage },
+  { path: '/screentime/browser', Component: BrowserScreenTimePage },
   { path: '/limits', Component: LimitsPage },
   { path: '/screenshare', Component: ScreenSharePage },
   { path: '*', element: <Navigate to="/devices" replace /> },

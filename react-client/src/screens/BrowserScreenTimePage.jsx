@@ -5,7 +5,7 @@ import { useDevices } from '../lib/useDevices'
 import { useLogout } from '../lib/useLogout'
 import { useTheme } from '../lib/useTheme'
 
-export default function ScreenTimePage() {
+export default function BrowserScreenTimePage() {
   const user = getUser()
   const onLogout = useLogout()
   const [theme, toggleTheme] = useTheme()
@@ -20,7 +20,7 @@ export default function ScreenTimePage() {
           selectedId={selectedId}
           onSelectDevice={setSelectedId}
           onLogout={onLogout}
-          mode="apps"
+          mode="browser"
         />
       </main>
     </div>

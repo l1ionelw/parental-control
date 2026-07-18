@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
 import DevicePicker from '../components/DevicePicker'
 import { Activity, ChevronDown, Globe, LayoutGrid, Spinner } from '../components/Icons'
@@ -6,7 +7,8 @@ import { Activity, ChevronDown, Globe, LayoutGrid, Spinner } from '../components
 // Executable names recognized as browsers for the "which browser was actually in
 // the foreground" filter (see BrowserPicker) - only apps we can plausibly attribute
 // tab-focus time to, matched case-insensitively against /api/screentime's exeName.
-const BROWSER_EXE_NAMES = ['chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe', 'opera.exe', 'vivaldi.exe']
+// No ".exe" suffix here - app_tracker.py stores exeName without the extension.
+const BROWSER_EXE_NAMES = ['chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi']
 
 function todayInputValue() {
   const d = new Date()
@@ -141,9 +143,11 @@ function useAppEvents(selectedId, date, enabled) {
   return appEvents
 }
 
-export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogout }) {
+// mode is 'apps' | 'browser' - driven by which route rendered this component
+// (see ScreenTimePage / BrowserScreenTimePage), not local state, so each is its
+// own linkable/bookmarkable URL instead of a client-side-only toggle.
+export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogout, mode }) {
   const [date, setDate] = useState(todayInputValue)
-  const [mode, setMode] = useState('apps') // 'apps' | 'browser'
   const [browserFilter, setBrowserFilter] = useState(null)
   const [expandedDomains, setExpandedDomains] = useState(() => new Set())
   const { events, loading, error } = useScreenTimeData(selectedId, date, mode, onLogout)
@@ -269,7 +273,7 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <ModeToggle mode={mode} onChange={setMode} />
+          <ModeTabs mode={mode} />
           <input
             type="date"
             value={date}
@@ -432,12 +436,11 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
   )
 }
 
-function ModeToggle({ mode, onChange }) {
+function ModeTabs({ mode }) {
   return (
     <div className="grid grid-cols-2 p-1 rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08]">
-      <button
-        type="button"
-        onClick={() => onChange('apps')}
+      <Link
+        to="/screentime"
         className={`flex items-center gap-1.5 px-3 h-9 rounded-lg text-[0.82rem] font-semibold transition ${
           mode === 'apps'
             ? 'bg-slate-100 dark:bg-white/[0.1] text-slate-900 dark:text-slate-100'
@@ -446,10 +449,9 @@ function ModeToggle({ mode, onChange }) {
       >
         <LayoutGrid width={16} height={16} />
         Apps
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange('browser')}
+      </Link>
+      <Link
+        to="/screentime/browser"
         className={`flex items-center gap-1.5 px-3 h-9 rounded-lg text-[0.82rem] font-semibold transition ${
           mode === 'browser'
             ? 'bg-slate-100 dark:bg-white/[0.1] text-slate-900 dark:text-slate-100'
@@ -458,7 +460,7 @@ function ModeToggle({ mode, onChange }) {
       >
         <Globe width={16} height={16} />
         Browser
-      </button>
+      </Link>
     </div>
   )
 }
@@ -470,7 +472,7 @@ function BrowserPicker({ options, selected, onSelect }) {
   if (options.length === 0) {
     return (
       <div className="rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-100 dark:border-amber-500/20 text-amber-800 dark:text-amber-400 px-4 py-3 text-[0.85rem] font-medium">
-        No browser process usage recorded for this device on this day, so tab activity can't be filtered to foreground time.
+        No browser data for this day.
       </div>
     )
   }

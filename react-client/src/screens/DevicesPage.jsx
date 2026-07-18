@@ -1,10 +1,11 @@
+import { Link } from 'react-router-dom'
 import TopBar from '../components/TopBar'
 import DevicePicker from '../components/DevicePicker'
 import { getUser } from '../lib/api'
 import { useDevices } from '../lib/useDevices'
 import { useLogout } from '../lib/useLogout'
 import { useTheme } from '../lib/useTheme'
-import { Monitor, Clock, AppsGrid, Calendar, Activity, Lock, Spinner } from '../components/Icons'
+import { Monitor, Clock, AppsGrid, Calendar, Activity, Spinner } from '../components/Icons'
 
 export default function DevicesPage() {
   const user = getUser()
@@ -86,10 +87,10 @@ function DeviceDetail({ device }) {
         Controls
       </h3>
       <div className="grid grid-cols-2 gap-3">
-        <ControlTile icon={Clock} label="Screen Time" hint="Daily limits" />
-        <ControlTile icon={AppsGrid} label="App Limits" hint="Per-app caps" />
-        <ControlTile icon={Calendar} label="Schedule" hint="Downtime & bedtime" />
-        <ControlTile icon={Activity} label="Activity" hint="Recent usage" />
+        <ControlTile to="/screentime" icon={Clock} label="Screen Time" hint="Daily limits" />
+        <ControlTile to="/limits" icon={AppsGrid} label="App Limits" hint="Per-app caps" />
+        <ControlTile to="/limits" icon={Calendar} label="Schedule" hint="Downtime & bedtime" />
+        <ControlTile to="/screentime/browser" icon={Activity} label="Activity" hint="Browser usage" />
       </div>
     </div>
   )
@@ -108,21 +109,18 @@ function Meta({ label, value, mono }) {
   )
 }
 
-function ControlTile({ icon: Icon, label, hint }) {
+function ControlTile({ to, icon: Icon, label, hint }) {
   return (
-    <div className="group relative rounded-2xl bg-white dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] p-4 overflow-hidden">
-      <div className="flex items-start justify-between">
-        <div className="w-10 h-10 grid place-items-center rounded-xl bg-indigo-50 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-400">
-          <Icon />
-        </div>
-        <span className="flex items-center gap-1 text-[0.68rem] font-bold uppercase tracking-wide text-slate-400 bg-slate-100 dark:bg-white/[0.06] rounded-full px-2 py-1">
-          <Lock width={12} height={12} />
-          Soon
-        </span>
+    <Link
+      to={to}
+      className="group relative rounded-2xl bg-white dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] p-4 overflow-hidden hover:shadow-md hover:border-black/[0.1] dark:hover:border-white/[0.14] transition focus-ring"
+    >
+      <div className="w-10 h-10 grid place-items-center rounded-xl bg-indigo-50 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-400">
+        <Icon />
       </div>
       <div className="mt-3 font-semibold text-slate-800 dark:text-slate-200">{label}</div>
       <div className="text-[0.82rem] text-slate-500 dark:text-slate-400">{hint}</div>
-    </div>
+    </Link>
   )
 }
 
