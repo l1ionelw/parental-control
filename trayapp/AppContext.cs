@@ -42,6 +42,8 @@ namespace TrayApp
             ScreenTimeEnforcer.Start();
             AlwaysAllowedApps.Start();
             PreviousAppUsedTracker.Start();
+            TabActivityStore.Start();
+            LocalExtensionServer.Start();
         }
 
         private void ShowServerConfig(object sender, EventArgs e)

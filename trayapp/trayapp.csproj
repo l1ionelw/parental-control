@@ -83,12 +83,15 @@
     <Compile Include="ApplicationFrameHostResolver.cs" />
     <Compile Include="ApplicationResolver.cs" />
     <Compile Include="AppContext.cs" />
+    <Compile Include="AppActivityStore.cs" />
     <Compile Include="PreviousAppUsedTracker.cs" />
     <Compile Include="DeviceInfo.cs" />
     <Compile Include="DowntimeEnforcer.cs" />
+    <Compile Include="LocalExtensionServer.cs" />
     <Compile Include="ManualBlockEnforcer.cs" />
     <Compile Include="ScreenTimeEnforcer.cs" />
     <Compile Include="ServerCommunicator.cs" />
+    <Compile Include="TabActivityStore.cs" />
     <Compile Include="Logger.cs" />
     <Compile Include="Overlay.cs">
       <SubType>Form</SubType>
@@ -104,7 +107,9 @@
     <Compile Include="Structs\AlwaysAllowedApp.cs" />
     <Compile Include="Structs\Application.cs" />
     <Compile Include="Structs\AppLimit.cs" />
+    <Compile Include="Structs\AppSwitchedEvent.cs" />
     <Compile Include="Structs\DowntimeWindow.cs" />
+    <Compile Include="Structs\WebsiteChangedMessage.cs" />
     <Compile Include="Structs\WindowChangedMessage.cs" />
     <Compile Include="VideoShare.cs" />
     <Compile Include="WindowChangedListener.cs" />

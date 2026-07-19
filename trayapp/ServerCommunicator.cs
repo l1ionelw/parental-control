@@ -32,7 +32,9 @@ namespace trayapp
         private static readonly Dictionary<string, Action<JsonElement>> _messageHandlers =
             new Dictionary<string, Action<JsonElement>>();
 
-        private static WindowChangedMessage? _pendingMessage;
+        private static WindowChangedMessage? _pendingAppEvent;
+        private static WebsiteChangedMessage? _pendingWebsiteChanged;
+        private static WebsiteHeartbeatMessage? _pendingWebsiteHeartbeat;
         private static readonly object _pendingLock = new object();
 
         // Device registration info (populated after REST registration)
@@ -333,18 +335,66 @@ try
 
         // Called by PreviousAppUsedTracker whenever a completed app session clears the
         // debounce window - relays it to the server as a window_changed message.
-        public static void ReportAppSession(Application previous, long startTime, long endTime)
+        // evt.Current isn't sent - the wire format only needs the finished session,
+        // the server infers the next open one from the next message's 'previous'.
+        public static void ReportAppSession(AppSwitchedEvent evt)
         {
             SendOrQueue(new WindowChangedMessage
             {
                 type = "window_changed",
-                startTime = startTime,
-                endTime = endTime,
-                previous = previous
+                startTime = evt.StartTime,
+                endTime = evt.EndTime,
+                previous = evt.Previous
+            });
+        }
+
+        // Called by TabActivityStore whenever a tab switch (or the 3-minute
+        // heartbeat-timeout watchdog) closes out the previously-open tab and opens
+        // a new one - relays it to the server in the same shape the chrome
+        // extension used to send directly (see browser_ws.py.handle_website_changed).
+        public static void ReportWebsiteSession(string url, string title, long switchTime)
+        {
+            SendOrQueue(new WebsiteChangedMessage
+            {
+                type = "website_changed",
+                after = new WebsiteTab { url = url, title = title },
+                switchTime = switchTime
+            });
+        }
+
+        // Called by TabActivityStore on every tab_heartbeat that matches the
+        // currently tracked tab - keeps the remote server's open session's endTime
+        // moving forward (see browser_ws.py.handle_website_heartbeat).
+        public static void ReportWebsiteHeartbeat(string url, string title, long timestamp)
+        {
+            SendOrQueue(new WebsiteHeartbeatMessage
+            {
+                type = "website_heartbeat",
+                tab = new WebsiteTab { url = url, title = title },
+                timestamp = timestamp
             });
         }
 
         private static void SendOrQueue(WindowChangedMessage msg)
+        {
+            SendOrQueue(msg, "window_changed", m => { lock (_pendingLock) _pendingAppEvent = m; });
+        }
+
+        private static void SendOrQueue(WebsiteChangedMessage msg)
+        {
+            SendOrQueue(msg, "website_changed", m => { lock (_pendingLock) _pendingWebsiteChanged = m; });
+        }
+
+        private static void SendOrQueue(WebsiteHeartbeatMessage msg)
+        {
+            SendOrQueue(msg, "website_heartbeat", m => { lock (_pendingLock) _pendingWebsiteHeartbeat = m; });
+        }
+
+        // Shared send-now-or-remember-for-reconnect path for every message type
+        // above - each type keeps its own single pending slot (see DrainPending),
+        // same one-slot-per-type behavior the original window_changed-only version
+        // had (a burst of failures while disconnected just keeps the latest).
+        private static void SendOrQueue<T>(T msg, string typeLabel, Action<T> setPending)
         {
             var cts = _cts;
             _ = Task.Run(async () =>
@@ -352,14 +402,11 @@ try
                 try
                 {
                     if (!await TrySendJson(msg, cts?.Token ?? CancellationToken.None))
-                    {
-                        lock (_pendingLock)
-                            _pendingMessage = msg;
-                    }
+                        setPending(msg);
                 }
                 catch (Exception ex)
                 {
-                    Logger.Log($"WS: failed to send window_changed - {ex.Message}");
+                    Logger.Log($"WS: failed to send {typeLabel} - {ex.Message}");
                 }
             });
         }
@@ -414,17 +461,33 @@ try
 
         private static void DrainPending(CancellationToken token)
         {
-            WindowChangedMessage? pending;
+            WindowChangedMessage? pendingAppEvent;
+            WebsiteChangedMessage? pendingWebsiteChanged;
+            WebsiteHeartbeatMessage? pendingWebsiteHeartbeat;
             lock (_pendingLock)
             {
-                pending = _pendingMessage;
-                _pendingMessage = null;
+                pendingAppEvent = _pendingAppEvent;
+                pendingWebsiteChanged = _pendingWebsiteChanged;
+                pendingWebsiteHeartbeat = _pendingWebsiteHeartbeat;
+                _pendingAppEvent = null;
+                _pendingWebsiteChanged = null;
+                _pendingWebsiteHeartbeat = null;
             }
 
-            if (pending.HasValue)
+            if (pendingAppEvent.HasValue)
             {
                 Logger.Log("WS: draining pending window_changed message");
-                _ = TrySendJson(pending.Value, token);
+                _ = TrySendJson(pendingAppEvent.Value, token);
+            }
+            if (pendingWebsiteChanged.HasValue)
+            {
+                Logger.Log("WS: draining pending website_changed message");
+                _ = TrySendJson(pendingWebsiteChanged.Value, token);
+            }
+            if (pendingWebsiteHeartbeat.HasValue)
+            {
+                Logger.Log("WS: draining pending website_heartbeat message");
+                _ = TrySendJson(pendingWebsiteHeartbeat.Value, token);
             }
         }
 

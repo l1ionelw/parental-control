@@ -64,11 +64,25 @@ namespace trayapp
                 _hasCurrent = true;
             }
 
+            // Always checked, independent of the debounce window below - a quick
+            // flick through an over-limit app shouldn't get a free pass just
+            // because it's too short to count as "real" usage for reporting.
+            ScreenTimeEnforcer.CheckAppLimit(switchedTo);
+
             if (!hasSession)
                 return;
 
-            ServerCommunicator.ReportAppSession(previous, startTime, endTime);
-            ScreenTimeEnforcer.ReportAppSession(previous, startTime, endTime);
+            var evt = new AppSwitchedEvent
+            {
+                Previous = previous,
+                StartTime = startTime,
+                EndTime = endTime,
+                Current = switchedTo
+            };
+
+            ServerCommunicator.ReportAppSession(evt);
+            ScreenTimeEnforcer.ReportAppSession(evt);
+            AppActivityStore.RecordSwitch(evt);
         }
 
         private static long NowUnixMs()

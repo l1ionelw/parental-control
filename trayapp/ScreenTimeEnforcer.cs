@@ -8,21 +8,26 @@ using TrayApp;
 
 namespace trayapp
 {
-    // Syncs per-app daily limits and today's per-app usage from the server, and
-    // tracks which apps are currently over their daily limit.
+    // Syncs per-app daily limits and today's per-app usage from the server into
+    // AppActivityStore, and enforces them by terminating the focused app once
+    // it's over its limit. Holds no state of its own - see AppActivityStore.
     internal static class ScreenTimeEnforcer
     {
         private const int ConfigurationReloadSeconds = 20; // 5 minutes
         private const int EnforcementCheckSeconds = 60; // check the focused app once a minute
 
         private static readonly object _lock = new object();
-        private static List<AppLimit> _appLimits = new List<AppLimit>();
-        // exeName -> seconds used today (see server.py _build_app_usage_payload).
-        private static Dictionary<string, int> _appUsageSeconds =
-            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        private static HashSet<string> _exceededApps =
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static CancellationTokenSource _cts;
+
+        // The raw window_changed events this app reports are timestamped and always
+        // clamped correctly by the server when it aggregates "today's" usage (see
+        // server.py _build_app_usage_payload) - but AppActivityStore's usage tally
+        // is a running total with no such clamping, so without this it would keep
+        // adding onto yesterday's numbers forever. Checked in ReportAppSession (a
+        // session boundary crossing midnight) and once a minute in EnforcementLoop
+        // (backstop for a machine idle on the same app across midnight, with no
+        // session boundary to catch it).
+        private static DateTime _currentDay = DateTime.Now.Date;
 
         // Separate from _cts: the per-minute "is the focused app over its limit"
         // check only runs while connected (see Activate/Deactivate), independent of
@@ -66,67 +71,52 @@ namespace trayapp
             Logger.Log("ScreenTimeEnforcer: deactivating, clearing app limit state");
             _enforcementCts?.Cancel();
 
-            lock (_lock)
-            {
-                _appLimits = new List<AppLimit>();
-                _appUsageSeconds = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-                _exceededApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            }
+            AppActivityStore.ResetAppLimits();
+            AppActivityStore.ResetUsageSeconds();
         }
 
-        // Called by PreviousAppUsedTracker for every completed app session. Syncs
-        // the finished session's duration onto today's usage for the *previous*
-        // app, then checks the *current* (just switched-to) app against its limit -
-        // not the previous one, which only feeds the usage tally here.
-        public static void ReportAppSession(Application previous, long startTime, long endTime)
+        // Called by PreviousAppUsedTracker for every completed (i.e. past the
+        // debounce window) app session - tallies the finished session's duration
+        // onto today's usage for the *previous* app. Does NOT check the current
+        // app's limit - PreviousAppUsedTracker calls CheckAppLimit for that on
+        // every switch regardless of debounce (see its own comment).
+        public static void ReportAppSession(AppSwitchedEvent evt)
         {
             if (!ServerCommunicator.IsConnected)
                 return;
 
-            if (!string.IsNullOrEmpty(previous.exeName))
+            // A session spanning midnight (e.g. 11:55pm -> 12:05am) would otherwise
+            // have its *entire* duration - including yesterday's portion - added to
+            // today's tally, double-counting against what the server's clamped
+            // aggregation already knows about. On rollover, skip the local add for
+            // this call entirely and let the forced resync below repopulate
+            // AppActivityStore's usage from the server's correctly-clamped numbers
+            // instead.
+            if (!CheckDayRollover() && !string.IsNullOrEmpty(evt.Previous.exeName))
             {
-                int usedSeconds = (int)((endTime - startTime) / 1000);
+                int usedSeconds = (int)((evt.EndTime - evt.StartTime) / 1000);
                 if (usedSeconds > 0)
-                {
-                    lock (_lock)
-                    {
-                        _appUsageSeconds.TryGetValue(previous.exeName, out int existingSeconds);
-                        _appUsageSeconds[previous.exeName] = existingSeconds + usedSeconds;
-                    }
-
-                    RecomputeExceeded();
-                }
-            }
-
-            CheckCurrentAppLimit();
-        }
-
-        public static List<AppLimit> GetAppLimits()
-        {
-            lock (_lock)
-            {
-                return new List<AppLimit>(_appLimits);
+                    AppActivityStore.AddUsageSeconds(evt.Previous.exeName, usedSeconds);
             }
         }
 
-        // exeName -> seconds used today, as last reported by the server.
-        public static Dictionary<string, int> GetAppUsageSeconds()
+        // Returns true (and triggers an immediate resync) if the local day has
+        // rolled over since the last check.
+        private static bool CheckDayRollover()
         {
+            var today = DateTime.Now.Date;
             lock (_lock)
             {
-                return new Dictionary<string, int>(_appUsageSeconds, StringComparer.OrdinalIgnoreCase);
+                if (today == _currentDay)
+                    return false;
+                _currentDay = today;
             }
-        }
 
-        public static bool IsOverLimit(string exeName)
-        {
-            if (string.IsNullOrEmpty(exeName))
-                return false;
-
-            lock (_lock)
-            {
-                return _exceededApps.Contains(exeName);
-            }
+            Logger.Log("ScreenTimeEnforcer: day rolled over, forcing a full usage resync");
+            var cts = _cts;
+            if (cts != null)
+                _ = Task.Run(() => ManualReload(cts.Token));
+            return true;
         }
 
         private static async Task ReloadLoop(CancellationToken token)
@@ -159,25 +149,46 @@ namespace trayapp
         {
             while (!token.IsCancellationRequested)
             {
-                CheckCurrentAppLimit();
+                CheckDayRollover();
+                // No AppSwitchedEvent here (this is the periodic backstop, not a
+                // switch), so resolve whatever's focused right now live.
+                CheckAppLimit(WindowChangedListener.GetCurrentApplication());
 
                 try { await Task.Delay(TimeSpan.FromSeconds(EnforcementCheckSeconds), token); }
                 catch (TaskCanceledException) { break; }
             }
         }
 
-        // Resolves whatever's focused right now (not the "previous" app from a
-        // session report) and terminates it if it's over its daily limit.
-        private static void CheckCurrentAppLimit()
+        // Terminates 'current' (not the "previous" app from a session report) if
+        // it's over its daily limit. Called on every window switch (regardless of
+        // PreviousAppUsedTracker's debounce - a quick flick through a blocked app
+        // shouldn't dodge enforcement just because it's too short to count as real
+        // usage) as well as once a minute from EnforcementLoop. 'current' is always
+        // already resolved by the caller, pid included, so termination doesn't need
+        // to re-look-up the foreground window.
+        public static void CheckAppLimit(Application current)
         {
-            Application current = WindowChangedListener.GetCurrentApplication();
-            if (string.IsNullOrEmpty(current.exeName))
+            if (string.IsNullOrEmpty(current.exeName) || !ServerCommunicator.IsConnected)
                 return;
 
-            if (IsOverLimit(current.exeName))
+            bool overLimit = AppActivityStore.IsOverLimit(current.exeName);
+            int usedSeconds = AppActivityStore.GetEffectiveUsageSeconds(current.exeName);
+            int? limitMinutes = null;
+            foreach (var limit in AppActivityStore.GetAppLimits())
             {
-                Logger.Log($"ScreenTimeEnforcer: {current.exeName} is over its daily limit, terminating");
-                ProcessTerminationManager.TerminateForegroundProcess(
+                if (string.Equals(limit.exeName, current.exeName, StringComparison.OrdinalIgnoreCase))
+                {
+                    limitMinutes = limit.dailyLimitMinutes;
+                    break;
+                }
+            }
+
+            Logger.Log($"ScreenTimeEnforcer: checking {current.exeName} - used={usedSeconds}s limit={(limitMinutes.HasValue ? limitMinutes + "min" : "none")} overLimit={overLimit}");
+
+            if (overLimit)
+            {
+                Logger.Log($"ScreenTimeEnforcer: {current.exeName} is over its daily limit, terminating (pid={current.pid})");
+                ProcessTerminationManager.TerminateProcess(current.pid,
                     $"{current.exeName} has reached its daily time limit. It will be available again tomorrow.");
             }
         }
@@ -209,13 +220,9 @@ namespace trayapp
                 }
             }
 
-            lock (_lock)
-            {
-                _appLimits = limits;
-            }
+            AppActivityStore.SetAppLimits(limits);
 
             Logger.Log($"ScreenTimeEnforcer: received {limits.Count} app limit(s) from server");
-            RecomputeExceeded();
         }
 
         private static void OnAppUsageMessage(JsonElement root)
@@ -228,49 +235,9 @@ namespace trayapp
                     usage[prop.Name] = prop.Value.GetInt32();
             }
 
-            lock (_lock)
-            {
-                _appUsageSeconds = usage;
-            }
+            AppActivityStore.SetUsageSeconds(usage);
 
             Logger.Log($"ScreenTimeEnforcer: received usage for {usage.Count} app(s) from server");
-            RecomputeExceeded();
-        }
-
-        // Usage is keyed by exeName only (the server aggregates it that way), so
-        // matching against a limit here is by exeName - not by path, unlike
-        // identifying which Application row a limit belongs to (see AppLimit.path).
-        private static void RecomputeExceeded()
-        {
-            List<AppLimit> limits;
-            Dictionary<string, int> usage;
-            lock (_lock)
-            {
-                limits = _appLimits;
-                usage = _appUsageSeconds;
-            }
-
-            var exceeded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var limit in limits)
-            {
-                if (string.IsNullOrEmpty(limit.exeName))
-                    continue;
-
-                int usedSeconds = usage.TryGetValue(limit.exeName, out var seconds) ? seconds : 0;
-                if (usedSeconds >= limit.dailyLimitMinutes * 60)
-                    exceeded.Add(limit.exeName);
-            }
-
-            HashSet<string> newlyExceeded;
-            lock (_lock)
-            {
-                newlyExceeded = new HashSet<string>(exceeded, StringComparer.OrdinalIgnoreCase);
-                newlyExceeded.ExceptWith(_exceededApps);
-                _exceededApps = exceeded;
-            }
-
-            foreach (var exeName in newlyExceeded)
-                Logger.Log($"ScreenTimeEnforcer: {exeName} has reached its daily limit");
         }
     }
 }

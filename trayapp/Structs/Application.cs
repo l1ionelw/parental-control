@@ -11,5 +11,6 @@ namespace trayapp.Structs
         public string exeName;
         public string fileDescription;
         public string path;
+        public int pid;
     }
 }

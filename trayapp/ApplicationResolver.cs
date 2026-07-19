@@ -54,7 +54,8 @@ namespace trayapp
                 {
                     exeName = exeName,
                     fileDescription = friendlyName,
-                    path = path
+                    path = path,
+                    pid = (int)pid
                 };
             }
             catch (Exception ex)

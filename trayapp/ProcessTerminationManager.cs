@@ -14,6 +14,11 @@ namespace trayapp
     /// </summary>
     internal static class ProcessTerminationManager
     {
+        // Looks up whatever's focused right now and terminates it - for callers
+        // (DowntimeEnforcer, ManualBlockEnforcer) that don't already have a
+        // resolved pid to act on. Callers that do (ScreenTimeEnforcer, which
+        // resolves the app as part of handling a window-switch event) should call
+        // TerminateProcess directly instead of paying for a second window lookup.
         public static void TerminateForegroundProcess(string blockedMessage)
         {
             IntPtr hwnd = WindowChangedListener.GetCurrentForegroundWindow();
@@ -28,9 +33,18 @@ namespace trayapp
             if (pid == 0)
                 return;
 
+            TerminateProcess((int)pid, blockedMessage);
+        }
+
+        // Terminates an already-identified process directly - no window lookup.
+        public static void TerminateProcess(int pid, string blockedMessage)
+        {
+            if (pid == 0)
+                return;
+
             try
             {
-                using (var proc = Process.GetProcessById((int)pid))
+                using (var proc = Process.GetProcessById(pid))
                 {
                     string exeName = proc.ProcessName;
 
