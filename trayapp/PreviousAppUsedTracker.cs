@@ -6,16 +6,19 @@ namespace trayapp
 {
     /// <summary>
     /// Owns the "previous app used" session state that used to live inside
-    /// ServerCommunicator. Registers with WindowChangedListener directly and, once
-    /// a completed session clears the debounce window, reports it to every
-    /// subsystem that needs it (currently ServerCommunicator, to relay to the
-    /// server, and ScreenTimeEnforcer, to tally local usage) - hardcoded for now,
-    /// same as the two-listener pattern elsewhere in this app.
+    /// ServerCommunicator. Registers with WindowChangedListener directly. Every
+    /// switch, no matter how short, updates the live "current app" state
+    /// (AppActivityStore, ScreenTimeEnforcer's limit check) and is relayed to the
+    /// server - so both stay in sync with what's actually focused right now.
+    /// Persisting the *finished* session as history/usage (locally and
+    /// server-side) is a separate decision gated by MinSessionMs, filtering out
+    /// alt-tab flicker without delaying real-time state.
     /// </summary>
     internal static class PreviousAppUsedTracker
     {
-        // Switches shorter than this aren't reported - filters out quick alt-tab
-        // flicks that aren't real usage.
+        // Finished sessions shorter than this aren't persisted into history/usage -
+        // filters out quick alt-tab flicks that aren't real usage. Does NOT gate
+        // whether a switch is reported at all (see OnWindowChanged).
         private static readonly long MinSessionMs = 1000;
 
         private static Application _currentApp;
@@ -34,6 +37,24 @@ namespace trayapp
                     _currentStartMs = NowUnixMs();
                     _hasCurrent = true;
                 }
+                AppActivityStore.SetCurrentApp(_currentApp, _currentStartMs);
+
+                // Seeds the server's open_app_sessions cache immediately, instead of
+                // leaving it empty until the first real switch away from this app -
+                // otherwise a long-running first session (e.g. the machine sits on
+                // one app for hours right after the trayapp starts) wouldn't show up
+                // live in /api/screentime until it finally ends. 'previous' is left
+                // default (StartTime == EndTime, i.e. zero duration) so the server's
+                // existing debounce write-gate treats it as a no-op for persistence -
+                // it only updates the current-app cache, same as every other switch.
+                var initialEvt = new AppSwitchedEvent
+                {
+                    Previous = default,
+                    StartTime = _currentStartMs,
+                    EndTime = _currentStartMs,
+                    Current = _currentApp
+                };
+                ServerCommunicator.ReportAppSession(initialEvt);
             }
 
             WindowChangedListener.RegisterCallback(OnWindowChanged);
@@ -44,34 +65,31 @@ namespace trayapp
             long now = NowUnixMs();
             Application switchedTo = ApplicationResolver.Resolve(hwnd);
 
-            Application previous = default;
-            long startTime = 0;
-            long endTime = 0;
-            bool hasSession = false;
+            Application previous;
+            long startTime;
+            bool hasPrevious;
 
             lock (_sessionLock)
             {
-                if (_hasCurrent && now - _currentStartMs >= MinSessionMs)
-                {
-                    previous = _currentApp;
-                    startTime = _currentStartMs;
-                    endTime = now;
-                    hasSession = true;
-                }
+                hasPrevious = _hasCurrent;
+                previous = _currentApp;
+                startTime = _currentStartMs;
 
                 _currentApp = switchedTo;
                 _currentStartMs = now;
                 _hasCurrent = true;
             }
 
-            // Always checked, independent of the debounce window below - a quick
-            // flick through an over-limit app shouldn't get a free pass just
-            // because it's too short to count as "real" usage for reporting.
+            // Always kept live, regardless of MinSessionMs below - the server and
+            // AppActivityStore need to reflect what's actually focused right now,
+            // not lag behind the debounce that only gates *persisted* history.
+            AppActivityStore.SetCurrentApp(switchedTo, now);
             ScreenTimeEnforcer.CheckAppLimit(switchedTo);
 
-            if (!hasSession)
-                return;
+            if (!hasPrevious)
+                return; // nothing finished yet - this is the very first window seen
 
+            long endTime = now;
             var evt = new AppSwitchedEvent
             {
                 Previous = previous,
@@ -80,9 +98,17 @@ namespace trayapp
                 Current = switchedTo
             };
 
+            // The server gets every switch, even sub-debounce ones, so its own
+            // "current app" cache stays live (mirrors AppActivityStore.SetCurrentApp
+            // above). Whether it persists 'previous' as history is the server's
+            // own duration check, same MinSessionMs threshold as here.
             ServerCommunicator.ReportAppSession(evt);
+
+            if (endTime - startTime < MinSessionMs)
+                return;
+
             ScreenTimeEnforcer.ReportAppSession(evt);
-            AppActivityStore.RecordSwitch(evt);
+            AppActivityStore.RecordEvent(evt.Previous, evt.StartTime, evt.EndTime);
         }
 
         private static long NowUnixMs()

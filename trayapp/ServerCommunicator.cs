@@ -333,10 +333,11 @@ try
             }
         }
 
-        // Called by PreviousAppUsedTracker whenever a completed app session clears the
-        // debounce window - relays it to the server as a window_changed message.
-        // evt.Current isn't sent - the wire format only needs the finished session,
-        // the server infers the next open one from the next message's 'previous'.
+        // Called by PreviousAppUsedTracker on every window switch, regardless of
+        // duration - the server needs 'current' to keep its own "what's focused
+        // right now" cache live in real time (see trayapp_ws.open_app_sessions).
+        // Whether 'previous' gets persisted into history/usage is a call the
+        // server makes based on duration, not something decided here.
         public static void ReportAppSession(AppSwitchedEvent evt)
         {
             SendOrQueue(new WindowChangedMessage
@@ -344,7 +345,8 @@ try
                 type = "window_changed",
                 startTime = evt.StartTime,
                 endTime = evt.EndTime,
-                previous = evt.Previous
+                previous = evt.Previous,
+                current = evt.Current
             });
         }
 

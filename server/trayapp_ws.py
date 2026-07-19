@@ -29,6 +29,28 @@ registry_lock = threading.Lock()
 active_connections = {}
 active_connections_lock = threading.Lock()
 
+# device_user_id -> {"exeName", "fileDescription", "path", "startTime"} for
+# whatever app is currently focused - kept in sync by every window_changed
+# message's 'current' field (see _handle_window_changed), even for switches too
+# short to be worth persisting as a history row. Mirrors
+# browser_ws.open_website_sessions, but for apps instead of tabs; assumes the
+# trayapp connection never drops for now (no reconciliation-on-reconnect yet).
+open_app_sessions = {}
+open_app_sessions_lock = threading.Lock()
+
+# Finished sessions shorter than this aren't persisted into history/usage -
+# filters out quick alt-tab flicks that aren't real usage. The trayapp reports
+# every switch regardless (see above), so this is purely a "is it worth writing
+# down" check, not a "should we hear about this at all" one.
+MIN_APP_SESSION_MS = 1000
+
+
+def get_open_app_session(device_user_id):
+    """Whatever app this device-user currently has focused, per the last
+    window_changed message - None if we've never heard from this device."""
+    with open_app_sessions_lock:
+        return open_app_sessions.get(device_user_id)
+
 # How many stream_frame messages between checks for "does anyone still have this
 # device open in a viewer" - at 15 FPS this is roughly every 5 seconds.
 STREAM_VIEWER_CHECK_INTERVAL = 75
@@ -196,13 +218,15 @@ def _handle_window_changed(key, device_user_id, data):
         entry = client_registry.get(key, {})
 
     prev = data.get("previous") or {}
+    current = data.get("current") or {}
     start = data.get("startTime")
     end = data.get("endTime")
-    duration = (
-        f"{(end - start) / 1000.0:.1f}s"
+    duration_ms = (
+        end - start
         if isinstance(start, (int, float)) and isinstance(end, (int, float))
-        else "?"
+        else None
     )
+    duration_str = f"{duration_ms / 1000.0:.1f}s" if duration_ms is not None else "?"
 
     print(
         f"[{entry.get('username') or 'unknown'}({entry.get('user_id') or '?'})] "
@@ -210,8 +234,23 @@ def _handle_window_changed(key, device_user_id, data):
         f"window_changed -> exe={prev.get('exeName')} "
         f"friendly={prev.get('fileDescription')} "
         f"path={prev.get('path')} "
-        f"used for {duration} (start={start} end={end})"
+        f"used for {duration_str} (start={start} end={end}) "
+        f"-> current={current.get('exeName')}"
     )
+
+    # Sent on every switch regardless of duration - keep the "what's focused
+    # right now" cache live even for switches too short to persist below.
+    if device_user_id is not None and isinstance(end, (int, float)):
+        with open_app_sessions_lock:
+            open_app_sessions[device_user_id] = {
+                "exeName": current.get("exeName"),
+                "fileDescription": current.get("fileDescription"),
+                "path": current.get("path"),
+                "startTime": int(end),
+            }
+
+    if duration_ms is None or duration_ms < MIN_APP_SESSION_MS:
+        return
 
     app_id = update_application_table(
         prev.get("exeName"),
@@ -219,12 +258,7 @@ def _handle_window_changed(key, device_user_id, data):
         prev.get("path"),
     )
 
-    if (
-        app_id is not None
-        and device_user_id is not None
-        and isinstance(start, (int, float))
-        and isinstance(end, (int, float))
-    ):
+    if app_id is not None and device_user_id is not None:
         record_event(device_user_id, app_id, int(start), int(end))
 
 
@@ -374,6 +408,8 @@ def handle(ws):
         # shouldn't cut off a session the extension is still tracking.
         if last_connection_for_key and device_user_id is not None:
             browser_ws.close_open_session(device_user_id, _now_ms())
+            with open_app_sessions_lock:
+                open_app_sessions.pop(device_user_id, None)
 
         with active_connections_lock:
             active_connections.pop(ws_id, None)

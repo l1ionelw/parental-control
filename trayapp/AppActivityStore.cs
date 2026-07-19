@@ -7,9 +7,9 @@ namespace trayapp
     // Single source of truth for app activity - mirrors TabActivityStore's shape
     // on the app side: the events table, the currently-focused app, today's
     // per-app usage tally, and the daily limits synced from the server. Fed by
-    // PreviousAppUsedTracker (RecordSwitch) and ScreenTimeEnforcer (usage/limit
-    // syncing, IsOverLimit checks) - ScreenTimeEnforcer itself only holds
-    // enforcement/networking logic, not state.
+    // PreviousAppUsedTracker (SetCurrentApp/RecordEvent) and ScreenTimeEnforcer
+    // (usage/limit syncing, IsOverLimit checks) - ScreenTimeEnforcer itself only
+    // holds enforcement/networking logic, not state.
     internal static class AppActivityStore
     {
         internal struct AppEvent
@@ -29,23 +29,33 @@ namespace trayapp
         private static long _currentAppSwitchTime;
         private static bool _hasCurrentApp;
 
-        // Called by PreviousAppUsedTracker for every completed app session -
-        // appends the finished session to the events table and updates which app
-        // is currently focused.
-        public static void RecordSwitch(AppSwitchedEvent evt)
+        // Called by PreviousAppUsedTracker on every window switch, regardless of
+        // duration - keeps "what's focused right now" live so
+        // GetEffectiveUsageSeconds/CheckAppLimit see accurate in-progress time
+        // even for switches too short to be worth persisting as history.
+        public static void SetCurrentApp(Application app, long switchTime)
+        {
+            lock (_lock)
+            {
+                _currentApp = app;
+                _currentAppSwitchTime = switchTime;
+                _hasCurrentApp = true;
+            }
+        }
+
+        // Called only for sessions that clear PreviousAppUsedTracker's debounce
+        // window - appends the finished session to the events table. Doesn't
+        // touch current-app state; that's kept live separately via SetCurrentApp.
+        public static void RecordEvent(Application app, long startTime, long endTime)
         {
             lock (_lock)
             {
                 _events.Add(new AppEvent
                 {
-                    App = evt.Previous,
-                    StartTime = evt.StartTime,
-                    EndTime = evt.EndTime
+                    App = app,
+                    StartTime = startTime,
+                    EndTime = endTime
                 });
-
-                _currentApp = evt.Current;
-                _currentAppSwitchTime = evt.EndTime;
-                _hasCurrentApp = true;
             }
         }
 
@@ -107,7 +117,7 @@ namespace trayapp
         }
 
         // Stored usage only reflects sessions that have actually ended (flushed by
-        // RecordSwitch/AddUsageSeconds on the next switch) - an app sitting focused
+        // AddUsageSeconds on the next switch) - an app sitting focused
         // for the last 10 minutes wouldn't show any of that time yet. This adds the
         // in-progress duration of the currently-focused app on top, live, without
         // persisting it - so enforcement (IsOverLimit) sees up-to-date usage without

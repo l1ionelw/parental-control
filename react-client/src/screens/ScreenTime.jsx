@@ -236,17 +236,28 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
       const entry = totals.get(key)
       if (entry) {
         entry.durationMs += duration
+        if (e.current) entry.isCurrent = true
       } else {
         totals.set(key, {
           key,
           label: e.exeName || 'unknown',
           sublabel: e.fileDescription,
           durationMs: duration,
+          isCurrent: !!e.current,
         })
       }
     }
     return [...totals.values()].sort((a, b) => b.durationMs - a.durationMs)
   }, [displayEvents, mode])
+
+  // The server injects a synthetic 'current: true' event covering "now" for
+  // whatever app is currently focused (see /api/screentime) - surfaced here as
+  // its own banner rather than only folded into appRows, so it's visible even
+  // when e.g. the day's total is otherwise 0.
+  const currentApp = useMemo(
+    () => (mode === 'apps' ? displayEvents.find((e) => e.current) : null),
+    [displayEvents, mode]
+  )
 
   const totalMs = useMemo(() => displayEvents.reduce((sum, e) => sum + (e.endTime - e.startTime), 0), [displayEvents])
   const maxHourMs = Math.max(1, ...hourly)
@@ -293,6 +304,17 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
       {mode === 'browser' && selectedId && !loading && (
         <div className="mb-4">
           <BrowserPicker options={browserOptions} selected={browserFilter} onSelect={setBrowserFilter} />
+        </div>
+      )}
+
+      {currentApp && (
+        <div className="mb-4 flex items-center gap-2.5 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 px-4 py-3">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 anim-pulse shrink-0" />
+          <span className="text-[0.85rem] text-emerald-800 dark:text-emerald-400">
+            Currently using{' '}
+            <span className="font-mono font-semibold">{currentApp.exeName}</span>
+            {currentApp.fileDescription ? ` (${currentApp.fileDescription})` : ''}
+          </span>
         </div>
       )}
 
@@ -414,7 +436,8 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
             <div className="rounded-3xl bg-white dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] shadow-sm p-2 sm:p-3">
               {appRows.map((row) => (
                 <div key={row.key} className="flex items-center gap-3 px-3 py-2.5">
-                  <div className="w-[120px] sm:w-[160px] shrink-0 text-[0.85rem] font-medium text-slate-700 dark:text-slate-300 truncate">
+                  <div className="w-[120px] sm:w-[160px] shrink-0 text-[0.85rem] font-medium text-slate-700 dark:text-slate-300 truncate flex items-center gap-1.5">
+                    {row.isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 anim-pulse shrink-0" />}
                     <span className="font-mono">{row.label}</span>
                   </div>
                   <div className="flex-1 h-5 rounded-full bg-slate-100 dark:bg-white/[0.06] overflow-hidden">

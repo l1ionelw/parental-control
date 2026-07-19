@@ -21,6 +21,7 @@ from models import User, DeviceUser, Application, Event, AppLimit, Downtime, Blo
 from auth import create_jwt_token, login_required, admin_required
 import manual_block
 import streaming
+import trayapp_ws
 
 api = Blueprint("api", __name__)
 
@@ -184,6 +185,33 @@ def screentime():
                 "exeName": app.exeName if app else None,
                 "fileDescription": app.fileDescription if app else None,
             })
+
+        # The Event table only has *finished* sessions - whatever's focused right
+        # now hasn't been written yet (won't be until the next switch). Inject it
+        # as a synthetic event from when it became current through to now, clamped
+        # into the requested range same as everything else above, so totals/charts
+        # don't lag behind reality by however long the current session has run.
+        current_session = trayapp_ws.get_open_app_session(device_user_id)
+        if current_session and current_session.get("exeName"):
+            session_start = current_session.get("startTime")
+            if isinstance(session_start, (int, float)):
+                clamped_start = max(int(session_start), start_time)
+                clamped_end = min(now_ms(), end_time)
+                if clamped_start < clamped_end:
+                    app_row = (
+                        session.query(Application)
+                        .filter(Application.exeName == current_session.get("exeName"))
+                        .order_by(Application.id.desc())
+                        .first()
+                    )
+                    events_json.append({
+                        "startTime": clamped_start,
+                        "endTime": clamped_end,
+                        "appId": app_row.id if app_row else None,
+                        "exeName": current_session.get("exeName"),
+                        "fileDescription": current_session.get("fileDescription") or (app_row.fileDescription if app_row else None),
+                        "current": True,
+                    })
 
         return jsonify({"events": events_json})
     finally:

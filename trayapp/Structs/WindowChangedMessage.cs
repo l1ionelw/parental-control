@@ -6,16 +6,20 @@ using System.Threading.Tasks;
 
 namespace trayapp.Structs
 {
-    // Reports a finished, legitimate focus session: the app the user was using from
-    // startTime..endTime. Only sessions of at least the minimum length are reported,
-    // so every message is a real usage block. The app switched to is not included –
-    // it will be the 'previous' of the next message (if it lasts long enough). Times
-    // are Unix milliseconds (UTC).
+    // Reports a window switch: the app used from startTime..endTime ('previous'),
+    // and the app just switched to ('current'). Sent on every switch, no matter
+    // how short - 'current' lets the server keep a live "what's focused right
+    // now" cache in sync in real time, same as it does for browser tabs. Whether
+    // 'previous' is actually persisted into history/usage is a separate decision
+    // the server makes based on its duration (see trayapp_ws._handle_window_changed) -
+    // this struct doesn't encode that, it's on every message unconditionally.
+    // Times are Unix milliseconds (UTC).
     struct WindowChangedMessage
     {
         public string type;
         public long startTime;      // when 'previous' gained focus
-        public long endTime;        // when focus left 'previous' (switch moment)
+        public long endTime;        // when focus left 'previous' == when 'current' gained it
         public Application previous; // the app we were using during the session
+        public Application current;  // the app just switched to
     }
 }
