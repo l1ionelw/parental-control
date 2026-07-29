@@ -72,7 +72,7 @@ namespace trayapp
             cts?.Cancel();
         }
 
-        private static void OnWindowChanged(IntPtr hwnd)
+        private static void OnWindowChanged(IntPtr hwnd, long seq)
         {
             Enforce();
         }

@@ -26,6 +26,13 @@ namespace trayapp
         private static bool _hasCurrent;
         private static readonly object _sessionLock = new object();
 
+        // WindowChangedListener now resolves each switch on a background task, so
+        // resolves for two closely-spaced switches (e.g. alt-tab flicker through a
+        // UWP window) can finish out of order. Track the highest sequence number
+        // applied so far and drop anything older, instead of letting a slow, stale
+        // resolve overwrite a newer one.
+        private static long _lastAppliedSeq = -1;
+
         public static void Start()
         {
             IntPtr initial = WindowChangedListener.GetCurrentForegroundWindow();
@@ -60,9 +67,9 @@ namespace trayapp
             WindowChangedListener.RegisterCallback(OnWindowChanged);
         }
 
-        private static void OnWindowChanged(IntPtr hwnd)
+        private static void OnWindowChanged(IntPtr hwnd, long seq)
         {
-            SwitchTo(ApplicationResolver.Resolve(hwnd));
+            SwitchTo(ApplicationResolver.Resolve(hwnd), seq);
         }
 
         // Feeds a switch into the same session-tracking pipeline as a real
@@ -70,12 +77,15 @@ namespace trayapp
         // used by PowerEventListener for system-level transitions (lock/unlock,
         // suspend/resume) that either don't produce a foreground-window event at
         // all (suspend) or aren't guaranteed to arrive promptly (lock/unlock).
+        // Stamped with the listener's current sequence number so it still wins
+        // over any older switch resolve that hasn't landed yet, but won't
+        // overwrite a switch that arrives after it.
         public static void ForceSwitch(Application switchedTo)
         {
-            SwitchTo(switchedTo);
+            SwitchTo(switchedTo, WindowChangedListener.CurrentSequence);
         }
 
-        private static void SwitchTo(Application switchedTo)
+        private static void SwitchTo(Application switchedTo, long seq)
         {
             long now = NowUnixMs();
 
@@ -85,6 +95,11 @@ namespace trayapp
 
             lock (_sessionLock)
             {
+                if (seq < _lastAppliedSeq)
+                    return; // a newer switch already applied - this resolve is stale
+
+                _lastAppliedSeq = seq;
+
                 hasPrevious = _hasCurrent;
                 previous = _currentApp;
                 startTime = _currentStartMs;

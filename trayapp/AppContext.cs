@@ -61,8 +61,15 @@ namespace TrayApp
                 {
                     Logger.Log("ConfigManager: Server URL updated: " + dialog.ServerUrl);
                     ConfigManager.SaveConfig(dialog.ServerUrl);
-                    // Restart the WebSocket connection with new URL
-                    ServerCommunicator.Restart();
+
+                    MessageBox.Show(
+                        "The server address was updated. The app will now close so it can start fresh with the new configuration. Please relaunch it manually.",
+                        "Parental Controls",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning);
+
+                    Logger.Log("ShowServerConfig: quitting app after server URL change");
+                    ExitApp(sender, e);
                 }
             }
         }

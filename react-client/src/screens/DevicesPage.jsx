@@ -14,6 +14,7 @@ export default function DevicesPage() {
   const { devices, selectedId, setSelectedId, loading, error } = useDevices(onLogout)
 
   const selected = devices.find((d) => d.id === selectedId) || null
+  const isAdmin = user?.type === 'Administrator'
 
   return (
     <div className="min-h-full flex flex-col">
@@ -91,6 +92,14 @@ function DeviceDetail({ device }) {
         <ControlTile to="/limits" icon={AppsGrid} label="App Limits" hint="Per-app caps" />
         <ControlTile to="/limits" icon={Calendar} label="Schedule" hint="Downtime & bedtime" />
         <ControlTile to="/screentime/browser" icon={Activity} label="Activity" hint="Browser usage" />
+        {isAdmin && (
+          <ControlTile
+            to="/screenshare"
+            icon={Monitor}
+            label="Screen Share"
+            hint="Watch live feed"
+          />
+        )}
       </div>
     </div>
   )

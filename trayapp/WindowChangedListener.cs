@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using trayapp.Structs;
 using TrayApp;
 namespace trayapp
@@ -18,8 +20,30 @@ namespace trayapp
         // Public static so the GC never reclaims them while the hook is live
         public static WinEventDelegate WinEventProc;
         public static IntPtr HookHandle;
-        // Registered callbacks, invoked synchronously in order
-        public static List<Action<IntPtr>> Callbacks = new List<Action<IntPtr>>();
+        // Registered callbacks, dispatched off the hook thread (see OnForegroundChanged)
+        // in the order they were registered, but concurrently with each other.
+        public static List<Action<IntPtr, long>> Callbacks = new List<Action<IntPtr, long>>();
+        // Monotonically increasing per-event sequence number. WINEVENT_OUTOFCONTEXT
+        // delivery relies on this thread pumping messages promptly - resolving the
+        // real app behind a window (ApplicationFrameHostResolver) can block for up
+        // to ~150ms, which during an alt-tab burst can cause the OS to drop events
+        // for this listener. Handing resolution off to a background task keeps the
+        // hook thread free; the sequence number lets subscribers that care about
+        // ordering (see PreviousAppUsedTracker) discard a resolve that finishes
+        // after a newer one already landed.
+        private static long _sequenceCounter;
+        public static long CurrentSequence => Interlocked.Read(ref _sequenceCounter);
+        // Debounced settle-check: virtual-desktop switches and alt-tab bursts can
+        // still occasionally drop an EVENT_SYSTEM_FOREGROUND event even with
+        // dispatch off the hook thread. RecheckDelayMs after the *last* dispatched
+        // switch, take one fresh GetForegroundWindow() read and correct if it
+        // doesn't match what we last dispatched. The timer is reset on every
+        // dispatch, so it only ever fires once things have settled, and quick
+        // switches within the window never trigger a recheck at all.
+        private const int RecheckDelayMs = 500;
+        private static Timer _recheckTimer;
+        private static readonly object _dispatchLock = new object();
+        private static IntPtr _lastDispatchedHwnd = IntPtr.Zero;
         [DllImport("user32.dll")]
         private static extern IntPtr SetWinEventHook(
             uint eventMin, uint eventMax, IntPtr hmodWinEventProc,
@@ -44,6 +68,8 @@ namespace trayapp
                 throw new InvalidOperationException("SetWinEventHook failed.");
             }
 
+            _recheckTimer = new Timer(OnRecheckTimerFired, null, Timeout.Infinite, Timeout.Infinite);
+
             Logger.Log("Window event listener created successfully");
         }
         public static void Stop()
@@ -53,6 +79,8 @@ namespace trayapp
                 UnhookWinEvent(HookHandle);
                 HookHandle = IntPtr.Zero;
             }
+            _recheckTimer?.Dispose();
+            _recheckTimer = null;
         }
         [DllImport("user32.dll")]
         private static extern IntPtr GetForegroundWindow();
@@ -69,7 +97,7 @@ namespace trayapp
         {
             return ApplicationResolver.Resolve(GetForegroundWindow());
         }
-        public static void RegisterCallback(Action<IntPtr> callback)
+        public static void RegisterCallback(Action<IntPtr, long> callback)
         {
             Logger.Log("window changed listener: new callback added");
             lock (Callbacks)
@@ -81,18 +109,59 @@ namespace trayapp
         {
             if (eventType != EVENT_SYSTEM_FOREGROUND || hwnd == IntPtr.Zero)
                 return;
-            string exeName = GetProcessName(hwnd);
-            Logger.Log($"Window changed! app={exeName} hwnd={hwnd}");
+
+            Dispatch(hwnd);
+
+            // Reset the settle-check timer on every switch, so it only fires once
+            // RecheckDelayMs has passed since the *last* one.
+            _recheckTimer?.Change(RecheckDelayMs, Timeout.Infinite);
+        }
+
+        private static void OnRecheckTimerFired(object state)
+        {
+            IntPtr current = GetForegroundWindow();
+            if (current == IntPtr.Zero)
+                return;
+
+            lock (_dispatchLock)
+            {
+                if (current == _lastDispatchedHwnd)
+                    return; // already tracking this window - nothing drifted
+            }
+
+            Logger.Log($"Window changed listener: settle-check found foreground drifted to hwnd={current}, correcting");
+            Dispatch(current);
+        }
+
+        private static void Dispatch(IntPtr hwnd)
+        {
+            long seq = Interlocked.Increment(ref _sequenceCounter);
+
+            lock (_dispatchLock)
+            {
+                _lastDispatchedHwnd = hwnd;
+            }
+
             // Snapshot the callback list so iteration is safe even if a callback mutates it
-            Action<IntPtr>[] snapshot;
+            Action<IntPtr, long>[] snapshot;
             lock (Callbacks)
             {
                 snapshot = Callbacks.ToArray();
             }
-            foreach (var cb in snapshot)
+
+            // Callback work (resolving the real app behind a window, in particular)
+            // can block for a while - do it off this thread so the hook keeps
+            // pumping messages and doesn't miss the next event in a fast burst
+            // (e.g. alt-tabbing through several windows).
+            Task.Run(() =>
             {
-                try { cb(hwnd); } catch { }
-            }
+                string exeName = GetProcessName(hwnd);
+                Logger.Log($"Window changed! app={exeName} hwnd={hwnd} seq={seq}");
+                foreach (var cb in snapshot)
+                {
+                    try { cb(hwnd, seq); } catch { }
+                }
+            });
         }
         private static string GetProcessName(IntPtr hwnd)
         {

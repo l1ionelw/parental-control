@@ -40,7 +40,7 @@ namespace trayapp
             Logger.Log("Overlay: Start() complete, callback registered");
         }
 
-        private static void OnForegroundWindowChanged(IntPtr hwnd)
+        private static void OnForegroundWindowChanged(IntPtr hwnd, long seq)
         {
             SetText(GetAppName(hwnd));
         }
