@@ -378,7 +378,8 @@ def _handle_stream_frame(ws, device_user_id, data, frame_count):
 
     frame_b64 = data.get("frame")
     if frame_b64:
-        payload = json.dumps({"type": "stream_frame", "frame": frame_b64})
+        screen_index = data.get("screen", 0)
+        payload = json.dumps({"type": "stream_frame", "screen": screen_index, "frame": frame_b64})
         for viewer_ws in streaming.get_viewers(device_user_id):
             try:
                 viewer_ws.send(payload)

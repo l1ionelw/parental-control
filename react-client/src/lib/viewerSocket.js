@@ -25,7 +25,7 @@ export function connectViewerSocket(deviceUserId, { onFrame, onWatching, onClose
     }
 
     if (data.type === 'stream_frame') {
-      onFrame?.(data.frame)
+      onFrame?.(data.frame, data.screen ?? 0)
     } else if (data.type === 'watching') {
       onWatching?.(data.deviceUserId, data.online)
     }

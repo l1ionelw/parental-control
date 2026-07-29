@@ -65,12 +65,12 @@ namespace trayapp
 
         // The server relays this to the tray app when either an admin starts
         // watching it or the current viewer count drops to zero.
-        private static void SendStreamFrame(string base64)
+        private static void SendStreamFrame(int screenIndex, string base64)
         {
             var cts = _cts;
             // Best-effort, no retry/queueing (unlike window_changed): a dropped
             // frame doesn't matter, the next one is a fraction of a second away.
-            _ = TrySendJson(new { type = "stream_frame", frame = base64 }, cts?.Token ?? CancellationToken.None);
+            _ = TrySendJson(new { type = "stream_frame", screen = screenIndex, frame = base64 }, cts?.Token ?? CancellationToken.None);
         }
 
         // Lets other classes react to server-initiated messages without ServerCommunicator

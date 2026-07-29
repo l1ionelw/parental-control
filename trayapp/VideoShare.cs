@@ -11,8 +11,9 @@ using TrayApp;
 namespace trayapp
 {
     /// <summary>
-    /// Captures the primary screen at a fixed low framerate and JPEG-encodes each
-    /// frame, handing it to whatever callback ServerCommunicator registers.
+    /// Captures every connected monitor at a fixed low framerate and JPEG-encodes
+    /// each frame, handing it to whatever callback ServerCommunicator registers
+    /// along with which screen index it came from (Screen.AllScreens order).
     ///
     /// Uses GDI (Graphics.CopyFromScreen) rather than the Windows.Graphics.Capture
     /// API: true WGC needs hand-rolled WinRT/D3D11 COM interop (IGraphicsCaptureItemInterop,
@@ -28,11 +29,11 @@ namespace trayapp
 
         private static readonly object _lock = new object();
         private static CancellationTokenSource _cts;
-        private static Action<string> _onFrameBase64;
+        private static Action<int, string> _onFrameBase64;
 
         // Set once at startup by ServerCommunicator - called with each captured
-        // frame's base64 JPEG data.
-        public static void SetFrameCallback(Action<string> onFrameBase64)
+        // frame's screen index and base64 JPEG data.
+        public static void SetFrameCallback(Action<int, string> onFrameBase64)
         {
             _onFrameBase64 = onFrameBase64;
         }
@@ -74,9 +75,16 @@ namespace trayapp
             {
                 try
                 {
-                    string base64 = CaptureFrameAsBase64Jpeg();
-                    if (base64 != null)
-                        _onFrameBase64?.Invoke(base64);
+                    Screen[] screens = Screen.AllScreens;
+                    for (int i = 0; i < screens.Length; i++)
+                    {
+                        if (token.IsCancellationRequested)
+                            break;
+
+                        string base64 = CaptureFrameAsBase64Jpeg(screens[i].Bounds);
+                        if (base64 != null)
+                            _onFrameBase64?.Invoke(i, base64);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -88,10 +96,8 @@ namespace trayapp
             }
         }
 
-        private static string CaptureFrameAsBase64Jpeg()
+        private static string CaptureFrameAsBase64Jpeg(Rectangle bounds)
         {
-            Rectangle bounds = Screen.PrimaryScreen.Bounds;
-
             using (var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppRgb))
             {
                 using (var g = Graphics.FromImage(bitmap))
