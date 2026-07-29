@@ -62,8 +62,22 @@ namespace trayapp
 
         private static void OnWindowChanged(IntPtr hwnd)
         {
+            SwitchTo(ApplicationResolver.Resolve(hwnd));
+        }
+
+        // Feeds a switch into the same session-tracking pipeline as a real
+        // foreground-window change, without needing an hwnd to resolve one from -
+        // used by PowerEventListener for system-level transitions (lock/unlock,
+        // suspend/resume) that either don't produce a foreground-window event at
+        // all (suspend) or aren't guaranteed to arrive promptly (lock/unlock).
+        public static void ForceSwitch(Application switchedTo)
+        {
+            SwitchTo(switchedTo);
+        }
+
+        private static void SwitchTo(Application switchedTo)
+        {
             long now = NowUnixMs();
-            Application switchedTo = ApplicationResolver.Resolve(hwnd);
 
             Application previous;
             long startTime;

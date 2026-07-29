@@ -37,6 +37,7 @@ namespace TrayApp
 
             Overlay.Start();
             WindowChangedListener.Start();
+            PowerEventListener.Start();
             ServerCommunicator.Start();
             DowntimeEnforcer.Start();
             ScreenTimeEnforcer.Start();
