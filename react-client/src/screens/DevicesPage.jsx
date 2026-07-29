@@ -47,7 +47,7 @@ export default function DevicesPage() {
           ) : (
             <>
               <DevicePicker devices={devices} selectedId={selectedId} onSelect={setSelectedId} />
-              {selected && <DeviceDetail device={selected} />}
+              {selected && <DeviceDetail device={selected} isAdmin={isAdmin} />}
             </>
           )}
         </div>
@@ -56,7 +56,7 @@ export default function DevicesPage() {
   )
 }
 
-function DeviceDetail({ device }) {
+function DeviceDetail({ device, isAdmin }) {
   const added = device.createdAt
     ? new Date(device.createdAt).toLocaleDateString(undefined, {
         year: 'numeric',
