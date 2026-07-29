@@ -11,6 +11,13 @@
 //    switched away from - e.g. hours parked on a video - still accumulates real
 //    screen time, and so the tray app can detect the browser closing (see
 //    TabActivityStore's heartbeat-timeout watchdog).
+// 3. Every 3 minutes (a separate, slower alarm), ask the tray app for website
+//    limits + this device's browser-focus-clamped usage per domain, and check
+//    just the currently active tab's domain against its limit - not on every
+//    tab/url switch, only on this timer (see TabActivityStore.RecomputeDomainUsage
+//    for why that number can't just be tallied incrementally). If it's over,
+//    redirect that tab to the bundled blocked page - purely client-side, no
+//    round-trip back to the tray app needed for the enforcement action itself.
 
 import { startTabListener } from './tabListener.js'
 
@@ -18,6 +25,8 @@ const TRAY_APP_BASE_URL = 'http://127.0.0.1:58231';
 const MAX_QUEUED_EVENTS = 500;
 const HEARTBEAT_ALARM = 'website-heartbeat';
 const HEARTBEAT_PERIOD_MINUTES = 1; // chrome.alarms' practical minimum granularity
+const LIMIT_CHECK_ALARM = 'website-limit-check';
+const LIMIT_CHECK_PERIOD_MINUTES = 3;
 
 // Persisted (not in-memory) so events survive the service worker being killed
 // mid-request - MV3 tears the worker down after ~30s idle, which would
@@ -29,6 +38,8 @@ const PENDING_KEY = 'pendingWebsiteEvents';
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === HEARTBEAT_ALARM) {
     sendHeartbeat();
+  } else if (alarm.name === LIMIT_CHECK_ALARM) {
+    checkActiveTabLimit();
   }
 });
 
@@ -118,13 +129,66 @@ async function sendHeartbeat() {
   await postToTrayApp('/tab-heartbeat', { url: tab.url, title: tab.title, timestamp: Date.now() });
 }
 
+// Best-effort hostname for matching against a domain limit - same fallback
+// behavior as react-client/src/screens/ScreenTime.jsx's domainOf, and needs to
+// agree with it since limits are keyed by whatever domain TabActivityStore's
+// RecomputeDomainUsage computed trayapp-side (see LocalExtensionServer's
+// /website-status).
+function domainOf(url) {
+  try {
+    return new URL(url).hostname || url || '';
+  } catch {
+    return url || '';
+  }
+}
+
+// Checks just the currently active tab's domain against its limit, using the
+// tray app's already-computed browser-focus-clamped usage - never on every tab
+// switch, only on this 3-minute alarm (see module docstring).
+async function checkActiveTabLimit() {
+  let status;
+  try {
+    const res = await fetch(`${TRAY_APP_BASE_URL}/website-status`);
+    if (!res.ok) throw new Error(`tray app returned ${res.status}`);
+    status = await res.json();
+  } catch (err) {
+    console.error('[parental-control] failed to fetch website-status:', err);
+    return;
+  }
+
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab || !tab.url || tab.id == null) return;
+
+  const domain = domainOf(tab.url);
+  if (!domain) return;
+
+  const limitMinutes = status.limits?.[domain];
+  if (limitMinutes == null) return; // no limit configured for this domain
+
+  const usedSeconds = status.usage?.[domain] || 0;
+  if (usedSeconds < limitMinutes * 60) return;
+
+  console.log(`[parental-control] ${domain} is over its daily limit (${usedSeconds}s >= ${limitMinutes}m), blocking tab`);
+  const blockedUrl = chrome.runtime.getURL(`blocked.html?domain=${encodeURIComponent(domain)}`);
+  try {
+    await chrome.tabs.update(tab.id, { url: blockedUrl });
+  } catch (err) {
+    console.error('[parental-control] failed to redirect over-limit tab:', err);
+  }
+}
+
 async function main() {
   // Idempotent - re-creating an existing alarm resets its schedule, so only
   // create it if it isn't already running (this function reruns on every
   // service worker wake, including ones the alarm itself triggers).
-  const existingAlarm = await chrome.alarms.get(HEARTBEAT_ALARM);
-  if (!existingAlarm) {
+  const existingHeartbeat = await chrome.alarms.get(HEARTBEAT_ALARM);
+  if (!existingHeartbeat) {
     chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: HEARTBEAT_PERIOD_MINUTES });
+  }
+
+  const existingLimitCheck = await chrome.alarms.get(LIMIT_CHECK_ALARM);
+  if (!existingLimitCheck) {
+    chrome.alarms.create(LIMIT_CHECK_ALARM, { periodInMinutes: LIMIT_CHECK_PERIOD_MINUTES });
   }
 
   await flushPending();

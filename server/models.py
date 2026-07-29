@@ -130,3 +130,20 @@ class WebsiteEvent(Base):
     endTime = Column(BigInteger, nullable=False)        # unix ms
     tabUrl = Column(Text, nullable=False)
     tabTitle = Column(Text, nullable=False)
+
+
+class WebsiteLimit(Base):
+    """A per-device daily time budget for one domain. Manual dedup key/upsert key
+    is (deviceUserID, domain) - admin-editable, viewable by anyone, same shape as
+    AppLimit. Unlike AppLimit, usage against this isn't computed server-side (see
+    trayapp's TabActivityStore) - the server only stores/serves the configured
+    number, the trayapp does the browser-focus-clamped usage calculation itself."""
+
+    __tablename__ = "websiteLimits"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    createdAt = Column(BigInteger, nullable=False)      # unix ms
+    updatedAt = Column(BigInteger, nullable=False)       # unix ms
+    deviceUserID = Column(Integer, nullable=False)      # -> deviceUser.id (no FK; manual lookup)
+    domain = Column(String(255), nullable=False)        # e.g. "youtube.com"
+    dailyLimitMinutes = Column(Integer, nullable=False) # minutes/day allowed; 0 = blocked

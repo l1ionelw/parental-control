@@ -161,6 +161,7 @@ namespace trayapp
                     DowntimeEnforcer.Deactivate();
                     ScreenTimeEnforcer.Deactivate();
                     AlwaysAllowedApps.Deactivate();
+                    TabActivityStore.Deactivate();
                     VideoShare.StopCapture();
                     _ws?.Dispose();
                     _ws = null;
@@ -261,7 +262,15 @@ try
             ScreenTimeEnforcer.Activate();
             _ = DowntimeEnforcer.ManualReload(token);
             _ = ScreenTimeEnforcer.ManualReload(token);
+            _ = TabActivityStore.ManualReload(token);
             AlwaysAllowedApps.ManualReload();
+
+            // Each guards itself to run only once per process lifetime (see their
+            // own SeedTodayHistory) - called on every (re)connect same as the
+            // syncs above since it's cheap to no-op after the first time, and
+            // simpler than tracking "have we ever connected" here separately.
+            _ = AppActivityStore.SeedTodayHistory(token);
+            _ = TabActivityStore.SeedTodayHistory(token);
 
             // Manual block is server-authoritative and not deactivated on
             // disconnect (see ManualBlockEnforcer) - just re-synced on every

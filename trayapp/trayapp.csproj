@@ -110,6 +110,7 @@
     <Compile Include="Structs\AppSwitchedEvent.cs" />
     <Compile Include="Structs\DowntimeWindow.cs" />
     <Compile Include="Structs\WebsiteChangedMessage.cs" />
+    <Compile Include="Structs\WebsiteLimit.cs" />
     <Compile Include="Structs\WindowChangedMessage.cs" />
     <Compile Include="VideoShare.cs" />
     <Compile Include="WindowChangedListener.cs" />

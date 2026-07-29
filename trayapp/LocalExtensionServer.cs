@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -83,6 +84,24 @@ namespace trayapp
                     if (TryParseTabPayload(body, out string url, out string title, out long timestamp))
                         TabActivityStore.RecordHeartbeat(url, title, timestamp);
                 }
+                else if (ctx.Request.HttpMethod == "GET" && path == "/website-status")
+                {
+                    // Polled by the extension every 3 minutes to check the active
+                    // tab's domain against its limit - see chrome-extension/background.js.
+                    // 'limits' is domain -> dailyLimitMinutes, 'usage' is domain ->
+                    // browser-focus-clamped seconds used today (TabActivityStore.
+                    // RecomputeDomainUsage), same keys so the extension can zip them
+                    // directly without a join.
+                    var limitsByDomain = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var limit in TabActivityStore.GetWebsiteLimits())
+                        limitsByDomain[limit.domain] = limit.dailyLimitMinutes;
+
+                    WriteJson(ctx, new
+                    {
+                        limits = limitsByDomain,
+                        usage = TabActivityStore.GetDomainUsageSeconds()
+                    });
+                }
                 else
                 {
                     ctx.Response.StatusCode = 404;
@@ -97,6 +116,14 @@ namespace trayapp
             {
                 try { ctx.Response.Close(); } catch { }
             }
+        }
+
+        private static void WriteJson(HttpListenerContext ctx, object payload)
+        {
+            var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload));
+            ctx.Response.ContentType = "application/json";
+            ctx.Response.ContentLength64 = bytes.Length;
+            ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
         }
 
         private static string ReadBody(HttpListenerRequest request)

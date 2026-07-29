@@ -210,17 +210,19 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
 
       let d = domains.get(domain)
       if (!d) {
-        d = { domain, durationMs: 0, paths: new Map() }
+        d = { domain, durationMs: 0, paths: new Map(), isCurrent: false }
         domains.set(domain, d)
       }
       d.durationMs += duration
+      if (e.current) d.isCurrent = true
 
       let p = d.paths.get(e.tabUrl)
       if (!p) {
-        p = { key: e.tabUrl, url: e.tabUrl, title: e.tabTitle || e.tabUrl, durationMs: 0 }
+        p = { key: e.tabUrl, url: e.tabUrl, title: e.tabTitle || e.tabUrl, durationMs: 0, isCurrent: false }
         d.paths.set(e.tabUrl, p)
       }
       p.durationMs += duration
+      if (e.current) p.isCurrent = true
     }
     return [...domains.values()]
       .map((d) => ({ ...d, paths: [...d.paths.values()].sort((a, b) => b.durationMs - a.durationMs) }))
@@ -256,6 +258,15 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
   // when e.g. the day's total is otherwise 0.
   const currentApp = useMemo(
     () => (mode === 'apps' ? displayEvents.find((e) => e.current) : null),
+    [displayEvents, mode]
+  )
+
+  // Same idea for the browser side - the server patches the still-open tab's
+  // WebsiteEvent row up to "now" (see /api/website-history), and clipEventsToActive
+  // preserves the 'current' flag through clamping, so this is only non-null once
+  // the selected browser is actually the foreground app right now (see activeIntervals).
+  const currentTab = useMemo(
+    () => (mode === 'browser' ? displayEvents.find((e) => e.current) : null),
     [displayEvents, mode]
   )
 
@@ -314,6 +325,16 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
             Currently using{' '}
             <span className="font-mono font-semibold">{currentApp.exeName}</span>
             {currentApp.fileDescription ? ` (${currentApp.fileDescription})` : ''}
+          </span>
+        </div>
+      )}
+
+      {currentTab && (
+        <div className="mb-4 flex items-center gap-2.5 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-100 dark:border-emerald-500/20 px-4 py-3">
+          <span className="w-2 h-2 rounded-full bg-emerald-500 anim-pulse shrink-0" />
+          <span className="text-[0.85rem] text-emerald-800 dark:text-emerald-400 truncate">
+            Currently browsing{' '}
+            <span className="font-semibold">{domainOf(currentTab.tabUrl)}</span>
           </span>
         </div>
       )}
@@ -397,8 +418,9 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
                           />
                         )}
                       </div>
-                      <div className="w-[120px] sm:w-[160px] shrink-0 text-[0.85rem] font-medium text-slate-700 dark:text-slate-300 truncate">
-                        {row.domain}
+                      <div className="w-[120px] sm:w-[160px] shrink-0 text-[0.85rem] font-medium text-slate-700 dark:text-slate-300 truncate flex items-center gap-1.5">
+                        {row.isCurrent && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 anim-pulse shrink-0" />}
+                        <span className="truncate">{row.domain}</span>
                       </div>
                       <div className="flex-1 h-5 rounded-full bg-slate-100 dark:bg-white/[0.06] overflow-hidden">
                         <div

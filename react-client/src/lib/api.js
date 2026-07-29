@@ -81,6 +81,14 @@ export const api = {
       auth: true,
       body: { deviceUserId, appId, dailyLimitMinutes },
     }),
+  websiteLimits: (deviceUserId) =>
+    request(`/website-limits?deviceUserId=${deviceUserId}`, { auth: true }),
+  setWebsiteLimit: (deviceUserId, domain, dailyLimitMinutes) =>
+    request('/website-limits', {
+      method: 'PUT',
+      auth: true,
+      body: { deviceUserId, domain, dailyLimitMinutes },
+    }),
   downtimes: (deviceUserId) => request(`/downtime?deviceUserId=${deviceUserId}`, { auth: true }),
   addDowntime: (deviceUserId, startMinute, endMinute, enabled) =>
     request('/downtime', {

@@ -1,6 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using trayapp.Structs;
+using TrayApp;
 
 namespace trayapp
 {
@@ -24,10 +28,64 @@ namespace trayapp
         private static Dictionary<string, int> _appUsageSeconds =
             new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         private static List<AppLimit> _appLimits = new List<AppLimit>();
+        private static bool _hasSeededHistory;
 
         private static Application _currentApp;
         private static long _currentAppSwitchTime;
         private static bool _hasCurrentApp;
+
+        public static void Start()
+        {
+            ServerCommunicator.RegisterMessageHandler("today_app_events", OnTodayAppEventsMessage);
+        }
+
+        // Called once per process lifetime, on the first successful server
+        // connection (see ServerCommunicator.SendHandshake) - backfills _events
+        // with today's already-persisted sessions from the server so
+        // TabActivityStore.RecomputeDomainUsage's browser-focus clamp sees the
+        // whole day's history, not just what's happened since this trayapp
+        // process started (in-memory state here doesn't survive a restart
+        // otherwise, unlike the server's durable Event table).
+        public static async Task SeedTodayHistory(CancellationToken token)
+        {
+            lock (_lock)
+            {
+                if (_hasSeededHistory)
+                    return;
+                _hasSeededHistory = true;
+            }
+
+            await ServerCommunicator.SendRequest(new { type = "get_today_app_events" }, token);
+        }
+
+        private static void OnTodayAppEventsMessage(JsonElement root)
+        {
+            if (!root.TryGetProperty("events", out var arr))
+                return;
+
+            var seeded = new List<AppEvent>();
+            foreach (var item in arr.EnumerateArray())
+            {
+                seeded.Add(new AppEvent
+                {
+                    App = new Application
+                    {
+                        exeName = item.GetProperty("exeName").GetString(),
+                        fileDescription = item.TryGetProperty("fileDescription", out var fd) ? fd.GetString() : "",
+                        path = item.TryGetProperty("path", out var p) ? p.GetString() : "",
+                    },
+                    StartTime = item.GetProperty("startTime").GetInt64(),
+                    EndTime = item.GetProperty("endTime").GetInt64(),
+                });
+            }
+
+            lock (_lock)
+            {
+                _events.InsertRange(0, seeded);
+            }
+
+            Logger.Log($"AppActivityStore: seeded {seeded.Count} historical event(s) for today from the server");
+        }
 
         // Called by PreviousAppUsedTracker on every window switch, regardless of
         // duration - keeps "what's focused right now" live so

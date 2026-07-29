@@ -16,7 +16,7 @@ import uuid
 
 from app_tracker import update_application_table, record_event, get_app_by_id
 from db import SessionLocal
-from models import DeviceUser, AppLimit, Downtime, Event, BlockException
+from models import DeviceUser, AppLimit, Downtime, Event, BlockException, WebsiteLimit, WebsiteEvent
 import browser_ws
 import manual_block
 import streaming
@@ -71,6 +71,18 @@ def _now_ms():
     return int(time.time() * 1000)
 
 
+def _today_bounds_ms():
+    """Local-midnight-to-local-midnight range as unix ms - same day boundary
+    _build_app_usage_payload already uses, pulled out so the two raw-history
+    payloads below (used to seed the trayapp's in-memory event caches on
+    startup - see AppActivityStore/TabActivityStore.SeedTodayHistory) agree
+    with it exactly."""
+    now = datetime.datetime.now()
+    start_of_day = datetime.datetime(now.year, now.month, now.day)
+    end_of_day = start_of_day + datetime.timedelta(days=1) - datetime.timedelta(milliseconds=1)
+    return int(start_of_day.timestamp() * 1000), int(end_of_day.timestamp() * 1000)
+
+
 def _build_app_limits_payload(device_user_id):
     """The trayapp's ScreenTimeEnforcer needs the limit merged with the Application
     row it applies to (exeName/fileDescription/allPaths) so it can match the
@@ -99,6 +111,26 @@ def _build_app_limits_payload(device_user_id):
                 "dailyLimitMinutes": l.dailyLimitMinutes,
             })
         return limits
+    finally:
+        session.close()
+
+
+def _build_website_limits_payload(device_user_id):
+    """Plain pass-through of the admin-configured WebsiteLimit rows - unlike
+    _build_app_usage_payload, there's no clamping/computation here at all. Usage
+    against these limits is computed entirely on the trayapp side (see
+    TabActivityStore's browser-focus-clamped domain usage tally); the server just
+    serves the configured numbers."""
+    if device_user_id is None:
+        return []
+
+    session = SessionLocal()
+    try:
+        rows = session.query(WebsiteLimit).filter(WebsiteLimit.deviceUserID == device_user_id).all()
+        return [
+            {"domain": r.domain, "dailyLimitMinutes": r.dailyLimitMinutes}
+            for r in rows
+        ]
     finally:
         session.close()
 
@@ -170,6 +202,80 @@ def _build_app_usage_payload(device_user_id):
         # onto whatever baseline this gives it (see ScreenTimeEnforcer.ReportAppSession),
         # so an absent key and a 0 are equivalent here - no drift either way.
         return usage_seconds
+    finally:
+        session.close()
+
+
+def _build_today_app_events_payload(device_user_id):
+    """Raw (unaggregated) today's Event rows, one per finished app session -
+    unlike _build_app_usage_payload's exeName->seconds total, this is what
+    AppActivityStore.SeedTodayHistory needs to repopulate its in-memory events
+    list on trayapp startup, so RecomputeDomainUsage's browser-focus clamp has
+    the whole day's history to work with even after a restart, not just
+    whatever's happened since the process started."""
+    if device_user_id is None:
+        return []
+
+    start_ms, end_ms = _today_bounds_ms()
+    session = SessionLocal()
+    try:
+        events = (
+            session.query(Event)
+            .filter(
+                Event.deviceUserID == device_user_id,
+                Event.startTime <= end_ms,
+                Event.endTime >= start_ms,
+            )
+            .order_by(Event.startTime)
+            .all()
+        )
+
+        payload = []
+        for e in events:
+            app = get_app_by_id(e.appID)
+            if app is None:
+                continue
+            payload.append({
+                "exeName": app.exeName,
+                "fileDescription": app.fileDescription,
+                "path": app.path,
+                "startTime": max(e.startTime, start_ms),
+                "endTime": min(e.endTime, end_ms),
+            })
+        return payload
+    finally:
+        session.close()
+
+
+def _build_today_website_events_payload(device_user_id):
+    """Raw today's WebsiteEvent rows - the tab-side equivalent of
+    _build_today_app_events_payload, seeds TabActivityStore.SeedTodayHistory."""
+    if device_user_id is None:
+        return []
+
+    start_ms, end_ms = _today_bounds_ms()
+    session = SessionLocal()
+    try:
+        events = (
+            session.query(WebsiteEvent)
+            .filter(
+                WebsiteEvent.deviceUserID == device_user_id,
+                WebsiteEvent.startTime <= end_ms,
+                WebsiteEvent.endTime >= start_ms,
+            )
+            .order_by(WebsiteEvent.startTime)
+            .all()
+        )
+
+        return [
+            {
+                "tabUrl": e.tabUrl,
+                "tabTitle": e.tabTitle,
+                "startTime": max(e.startTime, start_ms),
+                "endTime": min(e.endTime, end_ms),
+            }
+            for e in events
+        ]
     finally:
         session.close()
 
@@ -366,6 +472,15 @@ def handle(ws):
             elif msg_type == "get_app_limits":
                 limits = _build_app_limits_payload(device_user_id)
                 ws.send(json.dumps({"type": "app_limits", "limits": limits}))
+            elif msg_type == "get_website_limits":
+                limits = _build_website_limits_payload(device_user_id)
+                ws.send(json.dumps({"type": "website_limits", "limits": limits}))
+            elif msg_type == "get_today_app_events":
+                events = _build_today_app_events_payload(device_user_id)
+                ws.send(json.dumps({"type": "today_app_events", "events": events}))
+            elif msg_type == "get_today_website_events":
+                events = _build_today_website_events_payload(device_user_id)
+                ws.send(json.dumps({"type": "today_website_events", "events": events}))
             elif msg_type == "get_downtime":
                 downtimes = _build_downtime_payload(device_user_id)
                 ws.send(json.dumps({"type": "downtime", "downtimes": downtimes}))

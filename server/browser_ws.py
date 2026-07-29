@@ -146,12 +146,21 @@ def handle_website_heartbeat(device_user_id, data):
         _open_new_session(device_user_id, tab, timestamp)
 
 
+def get_open_website_session(device_user_id):
+    """Whatever tab this device-user currently has open (id/tabUrl/tabTitle of the
+    still-open WebsiteEvent row), per the last website_changed/website_heartbeat
+    message - None if nothing's open. Used by api.py to patch that row's endTime
+    up to "now" instead of whatever it was as of the last heartbeat (see
+    /api/website-history)."""
+    with open_website_sessions_lock:
+        return open_website_sessions.get(device_user_id)
+
+
 def handle_get_open_website_session(ws, device_user_id):
     """Lets the extension reconcile against server state on every reconnect
     (including after its service worker was killed and lost all local memory)
     instead of trusting its own possibly-stale idea of what's currently open."""
-    with open_website_sessions_lock:
-        cached = open_website_sessions.get(device_user_id)
+    cached = get_open_website_session(device_user_id)
 
     session_payload = {"tabUrl": cached["tabUrl"], "tabTitle": cached["tabTitle"]} if cached else None
     print(f"[browser_ws] get_open_website_session deviceUser={device_user_id} -> {session_payload}")

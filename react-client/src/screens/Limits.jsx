@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../lib/api'
 import DevicePicker from '../components/DevicePicker'
-import { AppsGrid, Ban, Calendar, ChevronDown, Lock, Plus, Spinner, Trash } from '../components/Icons'
+import { AppsGrid, Ban, Calendar, ChevronDown, Globe, Lock, Plus, Spinner, Trash } from '../components/Icons'
 
 const BLOCK_PRESETS = [
   { label: '10m', minutes: 10 },
@@ -48,6 +48,7 @@ export default function Limits({ devices, selectedId, onSelectDevice, user, onLo
 
   const [apps, setApps] = useState([])
   const [limits, setLimits] = useState([])
+  const [websiteLimits, setWebsiteLimits] = useState([])
   const [downtimes, setDowntimes] = useState([])
   const [manualBlock, setManualBlock] = useState(null)
   const [exceptions, setExceptions] = useState([])
@@ -83,14 +84,16 @@ export default function Limits({ devices, selectedId, onSelectDevice, user, onLo
     setError('')
     ;(async () => {
       try {
-        const [limitsRes, downtimeRes, manualBlockRes, exceptionsRes] = await Promise.all([
+        const [limitsRes, websiteLimitsRes, downtimeRes, manualBlockRes, exceptionsRes] = await Promise.all([
           api.limits(selectedId),
+          api.websiteLimits(selectedId),
           api.downtimes(selectedId),
           api.manualBlock(selectedId),
           api.blockExceptions(selectedId),
         ])
         if (!alive) return
         setLimits(limitsRes.limits)
+        setWebsiteLimits(websiteLimitsRes.limits)
         setDowntimes(downtimeRes.downtimes)
         setManualBlock(manualBlockRes)
         setExceptions(exceptionsRes.exceptions)
@@ -134,6 +137,18 @@ export default function Limits({ devices, selectedId, onSelectDevice, user, onLo
     const { limit } = await api.setLimit(selectedId, appId, dailyLimitMinutes)
     setLimits((prev) => {
       const rest = prev.filter((l) => l.appId !== appId)
+      return limit ? [...rest, limit] : rest
+    })
+  }
+
+  // dailyLimitMinutes === null clears the limit (same convention as saveLimit) -
+  // domain is the dedup/upsert key server-side (see PUT /api/website-limits),
+  // there's no separate id since there's no catalog row like Application to key
+  // off of.
+  async function saveWebsiteLimit(domain, dailyLimitMinutes) {
+    const { limit } = await api.setWebsiteLimit(selectedId, domain, dailyLimitMinutes)
+    setWebsiteLimits((prev) => {
+      const rest = prev.filter((l) => l.domain !== domain)
       return limit ? [...rest, limit] : rest
     })
   }
@@ -251,8 +266,208 @@ export default function Limits({ devices, selectedId, onSelectDevice, user, onLo
               ))}
             </div>
           )}
+
+          <h3 className="mt-7 mb-3 text-[0.8rem] font-bold uppercase tracking-wide text-slate-400 pl-1">
+            Website limits
+          </h3>
+          <WebsiteLimitsSection
+            websiteLimits={websiteLimits}
+            isAdmin={isAdmin}
+            onSave={saveWebsiteLimit}
+          />
         </>
       )}
+    </div>
+  )
+}
+
+// Unlike AppLimitRow, there's no device-independent catalog to iterate (no
+// "all known domains" endpoint - domains aren't discovered/synced the way
+// Application rows are) - so this is an add-by-typing-it list instead, closer
+// to DowntimeSection's add-inline-row pattern than AppLimitRow's toggle-open-a-
+// known-row one.
+function WebsiteLimitsSection({ websiteLimits, isAdmin, onSave }) {
+  const [adding, setAdding] = useState(false)
+  const [editingDomain, setEditingDomain] = useState(null)
+
+  const sorted = useMemo(
+    () => [...websiteLimits].sort((a, b) => a.domain.localeCompare(b.domain)),
+    [websiteLimits]
+  )
+
+  return (
+    <div className="rounded-3xl bg-white dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] shadow-sm p-5 sm:p-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 grid place-items-center rounded-xl bg-indigo-50 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-400">
+            <Globe width={18} height={18} />
+          </div>
+          <div className="font-semibold text-slate-800 dark:text-slate-200">Daily limits by domain</div>
+        </div>
+        {isAdmin && !adding && (
+          <button
+            onClick={() => setAdding(true)}
+            className="flex items-center gap-1 text-[0.82rem] font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 focus-ring rounded px-2 py-1"
+          >
+            <Plus width={14} height={14} />
+            Add
+          </button>
+        )}
+      </div>
+
+      <div className="mt-4 flex flex-col gap-2">
+        {sorted.length === 0 && !adding && (
+          <div className="text-[0.85rem] text-slate-500 dark:text-slate-400">
+            {isAdmin ? 'No website limits set.' : 'No website limits set by an administrator.'}
+          </div>
+        )}
+        {sorted.map((limit) => (
+          <WebsiteLimitRow
+            key={limit.domain}
+            limit={limit}
+            isAdmin={isAdmin}
+            editing={editingDomain === limit.domain}
+            onStartEdit={() => setEditingDomain(limit.domain)}
+            onStopEdit={() => setEditingDomain(null)}
+            onSave={(minutes) => onSave(limit.domain, minutes)}
+            onRemove={() => onSave(limit.domain, null)}
+          />
+        ))}
+        {adding && (
+          <WebsiteLimitRow
+            isAdmin={isAdmin}
+            isNew
+            onSave={async (minutes, domain) => {
+              await onSave(domain, minutes)
+              setAdding(false)
+            }}
+            onCancelNew={() => setAdding(false)}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
+function WebsiteLimitRow({ limit, isAdmin, isNew, editing, onStartEdit, onStopEdit, onSave, onRemove, onCancelNew }) {
+  const [domain, setDomain] = useState('')
+  const [hours, setHours] = useState(0)
+  const [minutes, setMinutes] = useState(0)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    if (isNew || editing) {
+      const total = limit?.dailyLimitMinutes ?? 0
+      setDomain(limit?.domain ?? '')
+      setHours(Math.floor(total / 60))
+      setMinutes(total % 60)
+      setErr('')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isNew, editing])
+
+  async function submit() {
+    const cleanDomain = domain.trim().toLowerCase()
+    if (!cleanDomain) {
+      setErr('Domain is required.')
+      return
+    }
+    setSaving(true)
+    setErr('')
+    try {
+      await onSave(hours * 60 + minutes, cleanDomain)
+      if (!isNew) onStopEdit()
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function remove() {
+    setSaving(true)
+    setErr('')
+    try {
+      await onRemove()
+    } catch (e) {
+      setErr(e.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!isNew && !editing) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 bg-slate-50 dark:bg-white/[0.04]">
+        <div className="font-mono text-[0.85rem] text-slate-700 dark:text-slate-300 truncate">{limit.domain}</div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[0.82rem] font-semibold text-slate-600 dark:text-slate-400">
+            {formatLimit(limit.dailyLimitMinutes)}
+          </span>
+          {isAdmin && (
+            <>
+              <button
+                onClick={onStartEdit}
+                className="text-[0.8rem] font-semibold text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300 focus-ring rounded px-2 py-1"
+              >
+                Edit
+              </button>
+              <button
+                onClick={remove}
+                disabled={saving}
+                title="Delete"
+                className="w-7 h-7 grid place-items-center rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-500/10 transition focus-ring disabled:opacity-50"
+              >
+                <Trash width={14} height={14} />
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-xl px-3 py-3 bg-slate-50 dark:bg-white/[0.04] anim-pop-in">
+      <div className="flex flex-wrap items-end gap-3">
+        {isNew ? (
+          <label className="flex flex-col gap-1.5">
+            <span className="text-[0.72rem] font-semibold uppercase tracking-wide text-slate-400">Domain</span>
+            <input
+              type="text"
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="youtube.com"
+              className="h-10 px-3 rounded-xl bg-white dark:bg-white/[0.06] border border-slate-200 dark:border-white/[0.08] text-[0.9rem] font-mono text-slate-900 dark:text-slate-100 focus-ring w-48"
+            />
+          </label>
+        ) : (
+          <div className="font-mono text-[0.85rem] text-slate-700 dark:text-slate-300 pb-2.5">{limit.domain}</div>
+        )}
+        <NumberField label="Hours" value={hours} max={23} onChange={setHours} />
+        <NumberField label="Minutes" value={minutes} max={59} onChange={setMinutes} />
+      </div>
+
+      {err && <div className="mt-3 text-[0.82rem] font-medium text-rose-600 dark:text-rose-400">{err}</div>}
+
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          onClick={submit}
+          disabled={saving}
+          className="h-9 px-4 rounded-xl font-semibold text-white text-[0.85rem] bg-gradient-to-br from-violet-600 to-indigo-600 transition active:scale-[0.98] disabled:opacity-70 focus-ring flex items-center gap-2"
+        >
+          {saving && <Spinner width={14} height={14} />}
+          Save
+        </button>
+        <button
+          onClick={() => (isNew ? onCancelNew() : onStopEdit())}
+          disabled={saving}
+          className="h-9 px-4 rounded-xl font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.06] text-[0.85rem] transition focus-ring"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   )
 }

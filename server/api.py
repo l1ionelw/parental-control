@@ -17,11 +17,12 @@ from flask import Blueprint, request, jsonify, g
 
 from app_tracker import get_app_by_id
 from db import SessionLocal
-from models import User, DeviceUser, Application, Event, AppLimit, Downtime, BlockException, WebsiteEvent
+from models import User, DeviceUser, Application, Event, AppLimit, Downtime, BlockException, WebsiteEvent, WebsiteLimit
 from auth import create_jwt_token, login_required, admin_required
 import manual_block
 import streaming
 import trayapp_ws
+import browser_ws
 
 api = Blueprint("api", __name__)
 
@@ -248,15 +249,43 @@ def website_history():
             .all()
         )
 
-        events_json = [
-            {
+        # The still-open tab's WebsiteEvent row only gets its endTime pushed
+        # forward once a minute (on each website_heartbeat), so it can read up to
+        # that long stale. If this device-user currently has a tab open, patch
+        # that same row's endTime up to "now" instead of waiting for the next
+        # heartbeat - same row, not an extra one, so nothing double-counts.
+        open_session = browser_ws.get_open_website_session(device_user_id)
+        open_row_id = open_session.get("id") if open_session else None
+
+        events_json = []
+        for e in events:
+            is_current = open_row_id is not None and e.id == open_row_id
+            events_json.append({
                 "startTime": max(e.startTime, start_time),
-                "endTime": min(e.endTime, end_time),
+                "endTime": min(now_ms(), end_time) if is_current else min(e.endTime, end_time),
                 "tabUrl": e.tabUrl,
                 "tabTitle": e.tabTitle,
-            }
-            for e in events
-        ]
+                **({"current": True} if is_current else {}),
+            })
+            if is_current:
+                open_row_id = None  # matched - the fallback below is now a no-op
+
+        # Edge case: the open row's stored endTime was just outside the overlap
+        # filter above (e.g. very stale) - fetch and inject it directly so a
+        # currently-open tab is never silently missing from "today"'s view.
+        if open_row_id is not None:
+            open_row = session.query(WebsiteEvent).filter(WebsiteEvent.id == open_row_id).first()
+            if open_row:
+                clamped_start = max(open_row.startTime, start_time)
+                clamped_end = min(now_ms(), end_time)
+                if clamped_start < clamped_end:
+                    events_json.append({
+                        "startTime": clamped_start,
+                        "endTime": clamped_end,
+                        "tabUrl": open_row.tabUrl,
+                        "tabTitle": open_row.tabTitle,
+                        "current": True,
+                    })
 
         return jsonify({"events": events_json})
     finally:
@@ -331,6 +360,81 @@ def put_limit():
         session.commit()
         session.refresh(limit)
         return jsonify({"limit": limit_public(limit)}), 201
+    finally:
+        session.close()
+
+
+def website_limit_public(l):
+    return {
+        "domain": l.domain,
+        "dailyLimitMinutes": l.dailyLimitMinutes,
+        "updatedAt": l.updatedAt,
+    }
+
+
+@api.get("/website-limits")
+@login_required
+def get_website_limits():
+    """Viewable by any signed-in user; only admins may change them (see
+    put_website_limit). Same shape/permissions as GET /api/limits, keyed by
+    domain instead of appId - see trayapp_ws.handle 'get_website_limits' for the
+    trayapp-facing sync of this same table."""
+    device_user_id = request.args.get("deviceUserId", type=int)
+    if device_user_id is None:
+        return jsonify({"error": "deviceUserId is required"}), 400
+
+    session = SessionLocal()
+    try:
+        rows = session.query(WebsiteLimit).filter(WebsiteLimit.deviceUserID == device_user_id).all()
+        return jsonify({"limits": [website_limit_public(l) for l in rows]})
+    finally:
+        session.close()
+
+
+@api.put("/website-limits")
+@admin_required
+def put_website_limit():
+    data = request.get_json(silent=True) or {}
+    device_user_id = data.get("deviceUserId")
+    domain = (data.get("domain") or "").strip().lower()
+    daily_limit_minutes = data.get("dailyLimitMinutes")
+
+    if device_user_id is None or not domain:
+        return jsonify({"error": "deviceUserId and domain are required"}), 400
+
+    session = SessionLocal()
+    try:
+        existing = (
+            session.query(WebsiteLimit)
+            .filter(WebsiteLimit.deviceUserID == device_user_id, WebsiteLimit.domain == domain)
+            .first()
+        )
+
+        if daily_limit_minutes is None:
+            # No limit specified -> clear any existing one.
+            if existing:
+                session.delete(existing)
+                session.commit()
+            return jsonify({"limit": None})
+
+        if existing:
+            existing.dailyLimitMinutes = daily_limit_minutes
+            existing.updatedAt = now_ms()
+            session.commit()
+            session.refresh(existing)
+            return jsonify({"limit": website_limit_public(existing)})
+
+        limit = WebsiteLimit(
+            createdAt=now_ms(),
+            updatedAt=now_ms(),
+            deviceUserID=device_user_id,
+            domain=domain,
+            dailyLimitMinutes=daily_limit_minutes,
+        )
+        session.add(limit)
+        session.commit()
+        session.refresh(limit)
+        return jsonify({"limit": website_limit_public(limit)}), 201
     finally:
         session.close()
 
