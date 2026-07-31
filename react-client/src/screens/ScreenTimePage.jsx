@@ -2,6 +2,7 @@ import TopBar from '../components/TopBar'
 import ScreenTime from './ScreenTime'
 import { getUser } from '../lib/api'
 import { useDevices } from '../lib/useDevices'
+import { useDeviceSelection } from '../lib/useDeviceSelection'
 import { useLogout } from '../lib/useLogout'
 import { useTheme } from '../lib/useTheme'
 
@@ -9,7 +10,8 @@ export default function ScreenTimePage() {
   const user = getUser()
   const onLogout = useLogout()
   const [theme, toggleTheme] = useTheme()
-  const { devices, selectedId, setSelectedId } = useDevices(onLogout)
+  const { devices } = useDevices(onLogout)
+  const { selectedId, setSelectedId } = useDeviceSelection(devices)
 
   return (
     <div className="min-h-full flex flex-col">

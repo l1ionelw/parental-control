@@ -110,6 +110,37 @@ function WatchingView({ deviceName, online, frameSrcs, onStop }) {
   const screenIndices = Object.keys(frameSrcs).map(Number).sort((a, b) => a - b)
   const tiles = screenIndices.length > 0 ? screenIndices : [0]
 
+  const containerRef = useRef(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  // 'combined' shows every display tiled as large as it can be inside the
+  // fullscreen area; a number pins the view to just that screen index.
+  const [view, setView] = useState('combined')
+
+  useEffect(() => {
+    function onFullscreenChange() {
+      setIsFullscreen(document.fullscreenElement === containerRef.current)
+    }
+    document.addEventListener('fullscreenchange', onFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
+  }, [])
+
+  // If the picked display disappears (e.g. the device reconnects with fewer
+  // monitors), fall back to the combined view instead of showing a blank tile.
+  useEffect(() => {
+    if (view !== 'combined' && !tiles.includes(view)) setView('combined')
+  }, [tiles, view])
+
+  function toggleFullscreen() {
+    if (document.fullscreenElement) {
+      document.exitFullscreen()
+    } else {
+      containerRef.current?.requestFullscreen()
+    }
+  }
+
+  const visibleTiles = view === 'combined' ? tiles : [view]
+  const showPerTileLabels = view === 'combined' && tiles.length > 1
+
   return (
     <div className="anim-pop-in">
       <div className="flex items-center justify-between mb-3">
@@ -121,53 +152,122 @@ function WatchingView({ deviceName, online, frameSrcs, onStop }) {
             </span>
           )}
         </div>
-        <button
-          onClick={onStop}
-          className="h-9 px-4 rounded-xl font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.06] text-[0.85rem] transition focus-ring"
-        >
-          Stop
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleFullscreen}
+            className="h-9 w-9 grid place-items-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.06] transition focus-ring"
+            title="Fullscreen"
+          >
+            <Maximize width={16} height={16} />
+          </button>
+          <button
+            onClick={onStop}
+            className="h-9 px-4 rounded-xl font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/[0.06] text-[0.85rem] transition focus-ring"
+          >
+            Stop
+          </button>
+        </div>
       </div>
 
-      <div className={tiles.length > 1 ? 'grid grid-cols-1 sm:grid-cols-2 gap-3' : ''}>
-        {tiles.map((screenIndex) => (
-          <ScreenTile
-            key={screenIndex}
-            label={tiles.length > 1 ? `Screen ${screenIndex + 1}` : null}
+      <div
+        ref={containerRef}
+        className={
+          isFullscreen
+            ? 'w-screen h-screen bg-black flex flex-col'
+            : 'rounded-3xl overflow-hidden'
+        }
+      >
+        {isFullscreen && tiles.length > 1 && (
+          <ViewTabs tiles={tiles} view={view} onChange={setView} onExit={toggleFullscreen} />
+        )}
+
+        {isFullscreen ? (
+          <ScreenGrid
+            tiles={visibleTiles}
+            frameSrcs={frameSrcs}
             online={online}
-            frameSrc={frameSrcs[screenIndex] ?? null}
+            showLabels={showPerTileLabels}
+            fill
           />
-        ))}
+        ) : (
+          <ScreenGrid tiles={tiles} frameSrcs={frameSrcs} online={online} showLabels={tiles.length > 1} />
+        )}
       </div>
     </div>
   )
 }
 
-function ScreenTile({ label, online, frameSrc }) {
-  const containerRef = useRef(null)
-  const [isFullscreen, setIsFullscreen] = useState(false)
+// Top bar shown only while fullscreen and there's more than one display -
+// lets you pick "Combined" (every screen tiled as large as it can be) or pin
+// the view to a single display, without leaving fullscreen to do it.
+function ViewTabs({ tiles, view, onChange, onExit }) {
+  return (
+    <div className="shrink-0 flex items-center justify-between gap-3 px-4 h-12 bg-black/70 backdrop-blur border-b border-white/10">
+      <div className="flex items-center gap-1 overflow-x-auto">
+        <TabButton active={view === 'combined'} onClick={() => onChange('combined')}>
+          Combined
+        </TabButton>
+        {tiles.map((i) => (
+          <TabButton key={i} active={view === i} onClick={() => onChange(i)}>
+            Display {i + 1}
+          </TabButton>
+        ))}
+      </div>
+      <button
+        onClick={onExit}
+        title="Exit fullscreen"
+        className="shrink-0 w-8 h-8 grid place-items-center rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition"
+      >
+        <Minimize width={16} height={16} />
+      </button>
+    </div>
+  )
+}
 
-  useEffect(() => {
-    function onFullscreenChange() {
-      setIsFullscreen(document.fullscreenElement === containerRef.current)
-    }
-    document.addEventListener('fullscreenchange', onFullscreenChange)
-    return () => document.removeEventListener('fullscreenchange', onFullscreenChange)
-  }, [])
+function TabButton({ active, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`shrink-0 h-8 px-3 rounded-lg text-[0.8rem] font-semibold transition ${
+        active ? 'bg-white/15 text-white' : 'text-white/60 hover:text-white hover:bg-white/[0.08]'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
 
-  function toggleFullscreen() {
-    if (document.fullscreenElement) {
-      document.exitFullscreen()
-    } else {
-      containerRef.current?.requestFullscreen()
-    }
-  }
+// Tiles every given screen index into a grid sized to make each tile as
+// large as possible - a near-square layout (cols = ceil(sqrt(n))) reads as
+// "one merged view" better than a single row/column would once n > 2.
+// `fill` stretches the grid to the full height of its (fullscreen) parent;
+// otherwise each tile keeps a 16:9 aspect ratio for the inline preview.
+function ScreenGrid({ tiles, frameSrcs, online, showLabels, fill }) {
+  const cols = Math.max(1, Math.ceil(Math.sqrt(tiles.length)))
 
   return (
     <div
-      ref={containerRef}
-      className={`relative group rounded-3xl bg-black border border-black/[0.06] dark:border-white/[0.08] shadow-sm overflow-hidden grid place-items-center ${
-        isFullscreen ? 'w-screen h-screen rounded-none' : 'aspect-video'
+      className={fill ? 'flex-1 min-h-0 grid gap-px bg-white/10' : 'grid gap-3'}
+      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+    >
+      {tiles.map((screenIndex) => (
+        <ScreenTile
+          key={screenIndex}
+          label={showLabels ? `Display ${screenIndex + 1}` : null}
+          online={online}
+          frameSrc={frameSrcs[screenIndex] ?? null}
+          fill={fill}
+        />
+      ))}
+    </div>
+  )
+}
+
+function ScreenTile({ label, online, frameSrc, fill }) {
+  return (
+    <div
+      className={`relative bg-black overflow-hidden grid place-items-center ${
+        fill ? 'min-h-0' : 'aspect-video rounded-3xl border border-black/[0.06] dark:border-white/[0.08] shadow-sm'
       }`}
     >
       {label && (
@@ -186,14 +286,6 @@ function ScreenTile({ label, online, frameSrc }) {
           Waiting for first frame…
         </span>
       )}
-
-      <button
-        onClick={toggleFullscreen}
-        title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-        className="absolute bottom-3 right-3 w-9 h-9 grid place-items-center rounded-lg bg-black/50 text-white opacity-0 group-hover:opacity-100 focus:opacity-100 transition"
-      >
-        {isFullscreen ? <Minimize width={16} height={16} /> : <Maximize width={16} height={16} />}
-      </button>
     </div>
   )
 }

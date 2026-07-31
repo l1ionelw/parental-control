@@ -41,6 +41,10 @@ function formatHour(hour) {
   return `${h}${hour < 12 ? 'a' : 'p'}`
 }
 
+function formatClock(ms) {
+  return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
 // Best-effort hostname for grouping - falls back to the raw string for
 // non-http(s) URLs (chrome://, file://, malformed) rather than dropping the row.
 function domainOf(url) {
@@ -270,6 +274,16 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
     [displayEvents, mode]
   )
 
+  // Chronological, per-session (not aggregated by app) view for apps mode -
+  // "when was this device using X, until when, and what did it switch to
+  // next" - as opposed to appRows' totals-by-app. Websites aren't included
+  // per the request this was built for; the browser mode tab already has its
+  // own per-domain/per-tab breakdown.
+  const timelineEvents = useMemo(() => {
+    if (mode !== 'apps') return []
+    return [...displayEvents].sort((a, b) => a.startTime - b.startTime)
+  }, [displayEvents, mode])
+
   const totalMs = useMemo(() => displayEvents.reduce((sum, e) => sum + (e.endTime - e.startTime), 0), [displayEvents])
   const maxHourMs = Math.max(1, ...hourly)
   const maxRowMs = Math.max(1, ...appRows.map((r) => r.durationMs), ...domainRows.map((r) => r.durationMs))
@@ -295,7 +309,7 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <ModeTabs mode={mode} />
+          <ModeTabs mode={mode} selectedId={selectedId} />
           <input
             type="date"
             value={date}
@@ -475,17 +489,70 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
               ))}
             </div>
           )}
+
+          {mode === 'apps' && timelineEvents.length > 0 && (
+            <>
+              <h3 className="mt-7 mb-3 text-[0.8rem] font-bold uppercase tracking-wide text-slate-400 pl-1">
+                Timeline
+              </h3>
+              <Timeline events={timelineEvents} />
+            </>
+          )}
         </>
       )}
     </div>
   )
 }
 
-function ModeTabs({ mode }) {
+// Chronological list of app sessions for the day - each row is "used <app>
+// for <duration>, from <start> to <end>", with a connecting line so
+// consecutive switches read as a sequence rather than a flat list.
+function Timeline({ events }) {
+  return (
+    <div className="rounded-3xl bg-white dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] shadow-sm p-5 sm:p-6">
+      {events.map((e, i) => (
+        <div key={`${e.appId}-${e.startTime}`} className="flex gap-3.5">
+          <div className="flex flex-col items-center shrink-0">
+            <span
+              className={`mt-1 w-2.5 h-2.5 rounded-full shrink-0 ${
+                e.current ? 'bg-emerald-500 anim-pulse' : 'bg-indigo-400 dark:bg-indigo-500'
+              }`}
+            />
+            {i < events.length - 1 && <span className="w-px flex-1 bg-black/[0.08] dark:bg-white/[0.1] my-1" />}
+          </div>
+          <div className={`min-w-0 ${i < events.length - 1 ? 'pb-4' : ''}`}>
+            <div className="font-mono text-[0.88rem] font-semibold text-slate-800 dark:text-slate-200 truncate">
+              {e.exeName || 'unknown'}
+              {e.fileDescription ? (
+                <span className="ml-1.5 font-sans font-normal text-[0.78rem] text-slate-400">
+                  {e.fileDescription}
+                </span>
+              ) : null}
+            </div>
+            <div className="mt-0.5 text-[0.8rem] text-slate-500 dark:text-slate-400">
+              {formatClock(e.startTime)} – {e.current ? 'now' : formatClock(e.endTime)}
+              <span className="mx-1.5 text-slate-300 dark:text-slate-600">·</span>
+              <span className="font-semibold text-slate-600 dark:text-slate-300">
+                {formatDuration(e.endTime - e.startTime)}
+              </span>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Carries the selected device along as a `?device=` query param so switching
+// between Apps and Browser screen time doesn't reset back to the first
+// device - see useDeviceSelection, which both pages read this same param
+// through.
+function ModeTabs({ mode, selectedId }) {
+  const suffix = selectedId != null ? `?device=${selectedId}` : ''
   return (
     <div className="grid grid-cols-2 p-1 rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08]">
       <Link
-        to="/screentime"
+        to={`/screentime${suffix}`}
         className={`flex items-center gap-1.5 px-3 h-9 rounded-lg text-[0.82rem] font-semibold transition ${
           mode === 'apps'
             ? 'bg-slate-100 dark:bg-white/[0.1] text-slate-900 dark:text-slate-100'
@@ -496,7 +563,7 @@ function ModeTabs({ mode }) {
         Apps
       </Link>
       <Link
-        to="/screentime/browser"
+        to={`/screentime/browser${suffix}`}
         className={`flex items-center gap-1.5 px-3 h-9 rounded-lg text-[0.82rem] font-semibold transition ${
           mode === 'browser'
             ? 'bg-slate-100 dark:bg-white/[0.1] text-slate-900 dark:text-slate-100'

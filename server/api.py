@@ -700,10 +700,18 @@ def delete_block_exception(exception_id):
 
 @api.post("/devices/register")
 def register_device():
-    """Register a device and get a user_id for WebSocket auth.
-    
-    Creates or finds DeviceUser by deviceID, creates a linked User account
-    (username = deviceID[:8] + osUsername), returns user_id.
+    """Register a device and get an id for WebSocket auth.
+
+    Finds or creates the DeviceUser by deviceID and returns its id as
+    'userId' - trayapp connections only need *some* stable integer to key
+    the websocket registry by (see trayapp_ws.client_registry), and
+    DeviceUser.id already is one. This does NOT create a row in `users` -
+    that table is exclusively for web-portal login accounts, and a device
+    reporting in has nothing to do with dashboard access (a trayapp machine
+    may have no portal user, and a portal user may not run the trayapp at
+    all). An earlier version of this endpoint also created a linked User
+    row per device-user pair, which polluted the login/account list with
+    entries no one could or should log in as - don't reintroduce that.
     """
     data = request.get_json(silent=True) or {}
     device_id = (data.get("deviceId") or "").strip()
@@ -733,24 +741,9 @@ def register_device():
                 device_user.deviceName = device_name
                 session.commit()
 
-        # Create or find linked User account
-        # Username format: device_id[:8] + "@" + os_username (unique per device-user pair)
-        user_username = f"{device_id[:8]}@{os_username}"
-        user = session.query(User).filter(User.username == user_username).first()
-        if not user:
-            user = User(
-                createdAt=now_ms(),
-                username=user_username,
-                password="",  # no password - device auth only
-                type="Standard",
-            )
-            session.add(user)
-            session.commit()
-            session.refresh(user)
-
         return jsonify({
-            "userId": user.id,
-            "username": user.username,
+            "userId": device_user.id,
+            "username": f"{device_id[:8]}@{os_username}",
             "deviceId": device_user.deviceID,
             "deviceName": device_user.deviceName,
         })
