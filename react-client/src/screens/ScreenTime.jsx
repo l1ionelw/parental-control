@@ -191,13 +191,21 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
 
   const needsBrowserPick = mode === 'browser' && !browserFilter
 
-  // Attributes each session's whole duration to the hour it started in - the
-  // simplification the server also uses (see /api/screentime docstring).
+  // Splits each session's duration across every hour it actually spans, so a
+  // long-running session (e.g. Sleep.exe idling overnight) shows up as one bar
+  // per hour it covers instead of one giant bar in the hour it started.
   const hourly = useMemo(() => {
     const buckets = new Array(24).fill(0)
     for (const e of displayEvents) {
-      const hour = new Date(e.startTime).getHours()
-      buckets[hour] += e.endTime - e.startTime
+      let cursor = e.startTime
+      while (cursor < e.endTime) {
+        const d = new Date(cursor)
+        const hourStart = new Date(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours()).getTime()
+        const nextHour = hourStart + 3600000
+        const segmentEnd = Math.min(e.endTime, nextHour)
+        buckets[d.getHours()] += segmentEnd - cursor
+        cursor = segmentEnd
+      }
     }
     return buckets
   }, [displayEvents])

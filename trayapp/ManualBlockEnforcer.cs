@@ -98,6 +98,21 @@ namespace trayapp
                 endTimeMs = _endTimeMs;
             }
 
+            // The server only pushes an explicit unblock when an admin clears it or
+            // on the next reconnect (see ServerCommunicator.OnManualBlockMessage) -
+            // it does not proactively notify us when a timed block simply runs out.
+            // So self-expire here rather than blocking forever at "0 minutes".
+            if (endTimeMs.HasValue && endTimeMs.Value <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+            {
+                Stop();
+                return;
+            }
+
+            EnforceTerminate(endTimeMs);
+        }
+
+        private static void EnforceTerminate(long? endTimeMs)
+        {
             string message = endTimeMs.HasValue
                 ? $"This device is blocked for {RemainingMinutes(endTimeMs.Value)} more minute(s)."
                 : "This device is currently blocked.";

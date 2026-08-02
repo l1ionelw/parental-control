@@ -6,12 +6,7 @@ namespace TrayApp
 {
     internal class TrayAppConfiguration
     {
-        public string DeviceId { get; set; }
-        public string DeviceName { get; set; }
-        public string Token { get; set; }
         public string ServerUrl { get; set; }
-        public string Username { get; set; }
-        public int UserId { get; set; }
     }
 
     internal static class ConfigManager
@@ -57,7 +52,7 @@ namespace TrayApp
                 }
 
                 CurrentConfig = config;
-                Logger.Log("ConfigManager: Valid config loaded, DeviceId=" + (config.DeviceId ?? "none") + ", UserId=" + config.UserId);
+                Logger.Log("ConfigManager: Valid config loaded, ServerUrl=" + config.ServerUrl);
                 return true;
             }
             catch (Exception ex)
@@ -94,15 +89,7 @@ namespace TrayApp
                     ServerUrl = serverUrl
                 };
 
-                var directory = Path.GetDirectoryName(_configPath);
-                if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
-                {
-                    Directory.CreateDirectory(directory);
-                }
-
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                string json = JsonSerializer.Serialize(config, options);
-                File.WriteAllText(_configPath, json);
+                WriteToDisk(config);
 
                 CurrentConfig = config;
                 Logger.Log("ConfigManager: Config saved with ServerUrl=" + serverUrl);
@@ -113,25 +100,17 @@ namespace TrayApp
             }
         }
 
-        public static void UpdateConfig(string deviceId, int userId, string token, string username)
+        private static void WriteToDisk(TrayAppConfiguration config)
         {
-            try
+            var directory = Path.GetDirectoryName(_configPath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
             {
-                CurrentConfig.DeviceId = deviceId;
-                CurrentConfig.UserId = userId;
-                CurrentConfig.Username = username;
-                CurrentConfig.Token = token;
-
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                string json = JsonSerializer.Serialize(CurrentConfig, options);
-                File.WriteAllText(_configPath, json);
-
-                Logger.Log("ConfigManager: Config updated with DeviceId=" + deviceId + ", UserId=" + userId);
+                Directory.CreateDirectory(directory);
             }
-            catch (Exception ex)
-            {
-                Logger.Log("ConfigManager: Failed to update config - " + ex.Message);
-            }
+
+            var options = new JsonSerializerOptions { WriteIndented = true };
+            string json = JsonSerializer.Serialize(config, options);
+            File.WriteAllText(_configPath, json);
         }
     }
 }

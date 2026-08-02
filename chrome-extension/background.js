@@ -11,13 +11,18 @@
 //    switched away from - e.g. hours parked on a video - still accumulates real
 //    screen time, and so the tray app can detect the browser closing (see
 //    TabActivityStore's heartbeat-timeout watchdog).
-// 3. Every 3 minutes (a separate, slower alarm), ask the tray app for website
-//    limits + this device's browser-focus-clamped usage per domain, and check
-//    just the currently active tab's domain against its limit - not on every
-//    tab/url switch, only on this timer (see TabActivityStore.RecomputeDomainUsage
-//    for why that number can't just be tallied incrementally). If it's over,
-//    redirect that tab to the bundled blocked page - purely client-side, no
-//    round-trip back to the tray app needed for the enforcement action itself.
+// 3. Check the active tab's domain against its limit on every event that also
+//    gets reported to the tray app - tab_switch, tab_url_changed, and the
+//    1-minute heartbeat - so switching straight into an already-over-limit site
+//    gets caught immediately, and a tab that's never switched away from still
+//    gets re-checked as its usage climbs. The separate 3-minute alarm is kept
+//    as a fallback in case none of those fire for a while. Usage itself is
+//    only refreshed tray-app-side every few minutes (see
+//    TabActivityStore.RecomputeDomainUsage), so checking more often than that
+//    doesn't get fresher numbers, but it does close the window between the
+//    limit being crossed and getting caught. If a tab is over, redirect it to
+//    the bundled blocked page - purely client-side, no round-trip back to the
+//    tray app needed for the enforcement action itself.
 
 import { startTabListener } from './tabListener.js'
 
@@ -51,6 +56,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 startTabListener(async (event) => {
   console.log('[parental-control] tab event:', event);
   await reportTabEvent(event);
+  await checkActiveTabLimit();
 });
 
 async function getPendingEvents() {
@@ -127,6 +133,7 @@ async function sendHeartbeat() {
   const tab = await getActiveTabInfo();
   if (!tab) return;
   await postToTrayApp('/tab-heartbeat', { url: tab.url, title: tab.title, timestamp: Date.now() });
+  await checkActiveTabLimit();
 }
 
 // Best-effort hostname for matching against a domain limit - same fallback
@@ -143,8 +150,9 @@ function domainOf(url) {
 }
 
 // Checks just the currently active tab's domain against its limit, using the
-// tray app's already-computed browser-focus-clamped usage - never on every tab
-// switch, only on this 3-minute alarm (see module docstring).
+// tray app's already-computed browser-focus-clamped usage - called on every
+// tab switch/URL change, on the 1-minute heartbeat, and on the 3-minute
+// fallback alarm (see module docstring).
 async function checkActiveTabLimit() {
   let status;
   try {

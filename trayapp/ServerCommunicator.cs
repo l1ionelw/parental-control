@@ -110,15 +110,6 @@ namespace trayapp
                 return;
             }
 
-            // Load persisted deviceId and userId from config
-            if (!string.IsNullOrEmpty(ConfigManager.CurrentConfig.DeviceId) && ConfigManager.CurrentConfig.UserId > 0)
-            {
-                _deviceId = ConfigManager.CurrentConfig.DeviceId;
-                _userId = ConfigManager.CurrentConfig.UserId;
-                _username = ConfigManager.CurrentConfig.Username;
-                Logger.Log($"WS: Loaded persisted config: DeviceId={_deviceId}, UserId={_userId}");
-            }
-
             while (!token.IsCancellationRequested)
             {
                 // Ensure we have valid credentials before connecting
@@ -223,9 +214,6 @@ try
                     _userId = result.userId;
                     _username = result.username;
                     _deviceId = result.deviceId; // in case server normalized it
-
-                    // Save to config for persistence
-                    ConfigManager.UpdateConfig(_deviceId, _userId, "", _username);
 
                     Logger.Log($"WS: Device registered successfully: deviceId={_deviceId}, userId={_userId}, username={_username}");
                     return true;
