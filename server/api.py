@@ -763,10 +763,12 @@ def put_disallowed_browsers():
         return jsonify({"error": "deviceUserId is required"}), 400
     if not isinstance(browsers, list) or not all(
         isinstance(b, dict) and isinstance(b.get("id"), str) and isinstance(b.get("exeName"), str)
-        and isinstance(b.get("pathSubstring"), str)
+        and isinstance(b.get("pathSubstring"), str) and isinstance(b.get("exeNamePartial"), bool)
         for b in browsers
     ):
-        return jsonify({"error": "browsers must be a list of {id, exeName, pathSubstring} objects"}), 400
+        return jsonify({
+            "error": "browsers must be a list of {id, exeName, pathSubstring, exeNamePartial} objects"
+        }), 400
 
     session = SessionLocal()
     try:

@@ -73,7 +73,10 @@ namespace trayapp
             {
                 foreach (var browser in _disallowed)
                 {
-                    if (!string.Equals(browser.exeName, exeName, StringComparison.OrdinalIgnoreCase))
+                    bool exeMatches = browser.exeNamePartial
+                        ? exeName.IndexOf(browser.exeName ?? "", StringComparison.OrdinalIgnoreCase) >= 0
+                        : string.Equals(browser.exeName, exeName, StringComparison.OrdinalIgnoreCase);
+                    if (!exeMatches)
                         continue;
 
                     if (string.IsNullOrEmpty(browser.pathSubstring))
@@ -113,6 +116,7 @@ namespace trayapp
                         id = item.TryGetProperty("id", out var idProp) ? idProp.GetString() : "",
                         exeName = item.TryGetProperty("exeName", out var exeProp) ? exeProp.GetString() : "",
                         pathSubstring = item.TryGetProperty("pathSubstring", out var pathProp) ? pathProp.GetString() : "",
+                        exeNamePartial = item.TryGetProperty("exeNamePartial", out var partialProp) && partialProp.GetBoolean(),
                     });
                 }
             }

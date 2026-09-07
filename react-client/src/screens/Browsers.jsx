@@ -80,6 +80,7 @@ export default function Browsers({ devices, selectedId, onSelectDevice, user, on
         id: b.id,
         exeName: b.exeName,
         pathSubstring: b.pathSubstring,
+        exeNamePartial: b.exeNamePartial,
       }))
       await api.setDisallowedBrowsers(selectedId, browsers)
       setSavedDisallowedIds(new Set(draftDisallowedIds))

@@ -135,14 +135,17 @@ class WebsiteEvent(Base):
 class DisallowedBrowsers(Base):
     """Per-device list of disallowed browsers - one row per device
     (deviceUserID is the upsert key, unlike Downtime's multi-row model).
-    'browsers' is a JSON-encoded list of {"id","exeName","pathSubstring"}
-    objects (string convention same as Application.allPaths). Brand-new
-    enforcement mechanism - NOT AppLimit/dailyLimitMinutes=0, since that
-    requires an existing Application catalog row a never-run browser won't
-    have. Enforced trayapp-side by exeName + path-substring match, not by
-    exe name alone, since bare exe names collide across some browsers
-    (chrome.exe: Chrome vs Chromium; launcher.exe/browser.exe: Opera GX,
-    Yandex, Coc Coc)."""
+    'browsers' is a JSON-encoded list of
+    {"id","exeName","pathSubstring","exeNamePartial"} objects (string
+    convention same as Application.allPaths). Brand-new enforcement
+    mechanism - NOT AppLimit/dailyLimitMinutes=0, since that requires an
+    existing Application catalog row a never-run browser won't have.
+    Enforced trayapp-side by exeName + path-substring match, not by exe name
+    alone, since bare exe names collide across some browsers (chrome.exe:
+    Chrome vs Chromium; launcher.exe/browser.exe: Opera GX, Yandex, Coc Coc).
+    exeNamePartial opts a browser into substring (rather than exact) matching
+    on exeName, for browsers that bake a dynamic version/timestamp into the
+    exe name itself (e.g. Wave Browser) where exact matching can never work."""
 
     __tablename__ = "disallowedBrowsers"
 
