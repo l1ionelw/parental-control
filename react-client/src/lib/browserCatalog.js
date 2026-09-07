@@ -53,12 +53,7 @@ export const BROWSER_CATALOG = [
   { id: '360browser', label: '360 Browser', exeName: '360se', pathSubstring: '360Chrome', exeNamePartial: false },
   { id: 'midori', label: 'Midori', exeName: 'midori', pathSubstring: 'Midori', exeNamePartial: false },
   { id: 'iexplore', label: 'Internet Explorer', exeName: 'iexplore', pathSubstring: 'Internet Explorer', exeNamePartial: false },
-  // Wave Browser's exe name is versioned/timestamped per install/update (e.g.
-  // "Wave Browser - 2026-09-05T214756.981.exe"), so exact exeName matching
-  // can never work - both exeName and pathSubstring match on the "Wave
-  // Browser" fragment common to every version, observed installing under
-  // {drive}\Users\{user}\Downloads\Wave Browser - <timestamp>\.
-  { id: 'wavebrowser', label: 'Wave Browser', exeName: 'wave browser', pathSubstring: 'Wave Browser', exeNamePartial: true },
+  { id: 'wavebrowser', label: 'Wave Browser', exeName: 'wavebrowser', pathSubstring: 'Wave Browser', exeNamePartial: false },
   // The following are mostly Chromium-based adware/PUP browsers bundled with
   // free software installers - exactly the kind a parent would want blocked.
   { id: 'torch', label: 'Torch Browser', exeName: 'torch', pathSubstring: 'Torch\\Application', exeNamePartial: false },
