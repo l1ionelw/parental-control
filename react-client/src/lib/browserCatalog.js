@@ -53,7 +53,7 @@ export const BROWSER_CATALOG = [
   { id: '360browser', label: '360 Browser', exeName: '360se', pathSubstring: '360Chrome', exeNamePartial: false },
   { id: 'midori', label: 'Midori', exeName: 'midori', pathSubstring: 'Midori', exeNamePartial: false },
   { id: 'iexplore', label: 'Internet Explorer', exeName: 'iexplore', pathSubstring: 'Internet Explorer', exeNamePartial: false },
-  { id: 'wavebrowser', label: 'Wave Browser', exeName: 'wavebrowser', pathSubstring: 'Wave Browser', exeNamePartial: false },
+  { id: 'wavebrowser', label: 'Wave Browser', exeName: 'wavebrowser', pathSubstring: 'WaveBrowser', exeNamePartial: false },
   // The following are mostly Chromium-based adware/PUP browsers bundled with
   // free software installers - exactly the kind a parent would want blocked.
   { id: 'torch', label: 'Torch Browser', exeName: 'torch', pathSubstring: 'Torch\\Application', exeNamePartial: false },
