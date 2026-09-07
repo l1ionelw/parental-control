@@ -4,6 +4,7 @@ import AppsPage from './screens/AppsPage'
 import ScreenTimePage from './screens/ScreenTimePage'
 import BrowserScreenTimePage from './screens/BrowserScreenTimePage'
 import LimitsPage from './screens/LimitsPage'
+import BrowsersPage from './screens/BrowsersPage'
 import ScreenSharePage from './screens/ScreenSharePage'
 
 // Auth is gated in main.jsx (renders <Auth/> instead of this router at all when
@@ -18,6 +19,7 @@ export const router = createBrowserRouter([
   { path: '/screentime', Component: ScreenTimePage },
   { path: '/screentime/browser', Component: BrowserScreenTimePage },
   { path: '/limits', Component: LimitsPage },
+  { path: '/browsers', Component: BrowsersPage },
   { path: '/screenshare', Component: ScreenSharePage },
   { path: '*', element: <Navigate to="/devices" replace /> },
 ])

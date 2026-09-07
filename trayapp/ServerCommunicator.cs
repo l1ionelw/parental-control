@@ -152,6 +152,7 @@ namespace trayapp
                     DowntimeEnforcer.Deactivate();
                     ScreenTimeEnforcer.Deactivate();
                     AlwaysAllowedApps.Deactivate();
+                    DisallowedBrowserEnforcer.Deactivate();
                     TabActivityStore.Deactivate();
                     VideoShare.StopCapture();
                     _ws?.Dispose();
@@ -252,6 +253,7 @@ try
             _ = ScreenTimeEnforcer.ManualReload(token);
             _ = TabActivityStore.ManualReload(token);
             AlwaysAllowedApps.ManualReload();
+            DisallowedBrowserEnforcer.ManualReload();
 
             // Each guards itself to run only once per process lifetime (see their
             // own SeedTodayHistory) - called on every (re)connect same as the

@@ -17,7 +17,7 @@ from flask import Blueprint, request, jsonify, g
 
 from app_tracker import get_app_by_id
 from db import SessionLocal
-from models import User, DeviceUser, Application, Event, AppLimit, Downtime, BlockException, WebsiteEvent, WebsiteLimit
+from models import User, DeviceUser, Application, Event, AppLimit, Downtime, BlockException, WebsiteEvent, WebsiteLimit, DisallowedBrowsers
 from auth import create_jwt_token, login_required, admin_required
 import manual_block
 import streaming
@@ -696,6 +696,106 @@ def delete_block_exception(exception_id):
         return jsonify({"ok": True})
     finally:
         session.close()
+
+
+def disallowed_browsers_public(row):
+    try:
+        browsers = json.loads(row.browsers) if row and row.browsers else []
+    except (json.JSONDecodeError, TypeError):
+        browsers = []
+    return {"browsers": browsers, "updatedAt": row.updatedAt if row else None}
+
+
+def _push_disallowed_browsers(device_user_id):
+    """Mirrors _push_manual_block: tells the trayapp right away if it's currently
+    connected - it also asks on every (re)connect itself (see trayapp_ws.py
+    get_disallowed_browsers), so a device that's offline right now still picks
+    this up the moment it reconnects."""
+    ws = streaming.get_trayapp_ws(device_user_id)
+    if ws is None:
+        return
+
+    session = SessionLocal()
+    try:
+        row = (
+            session.query(DisallowedBrowsers)
+            .filter(DisallowedBrowsers.deviceUserID == device_user_id)
+            .first()
+        )
+        payload = disallowed_browsers_public(row)
+        payload["type"] = "disallowed_browsers"
+        try:
+            ws.send(json.dumps(payload))
+        except Exception:
+            pass
+    finally:
+        session.close()
+
+
+@api.get("/disallowed-browsers")
+@login_required
+def get_disallowed_browsers():
+    """Viewable by any signed-in user; only admins may change it (see below)."""
+    device_user_id = request.args.get("deviceUserId", type=int)
+    if device_user_id is None:
+        return jsonify({"error": "deviceUserId is required"}), 400
+
+    session = SessionLocal()
+    try:
+        row = (
+            session.query(DisallowedBrowsers)
+            .filter(DisallowedBrowsers.deviceUserID == device_user_id)
+            .first()
+        )
+        return jsonify(disallowed_browsers_public(row))
+    finally:
+        session.close()
+
+
+@api.put("/disallowed-browsers")
+@admin_required
+def put_disallowed_browsers():
+    data = request.get_json(silent=True) or {}
+    device_user_id = data.get("deviceUserId")
+    browsers = data.get("browsers")
+
+    if device_user_id is None:
+        return jsonify({"error": "deviceUserId is required"}), 400
+    if not isinstance(browsers, list) or not all(
+        isinstance(b, dict) and isinstance(b.get("id"), str) and isinstance(b.get("exeName"), str)
+        and isinstance(b.get("pathSubstring"), str)
+        for b in browsers
+    ):
+        return jsonify({"error": "browsers must be a list of {id, exeName, pathSubstring} objects"}), 400
+
+    session = SessionLocal()
+    try:
+        existing = (
+            session.query(DisallowedBrowsers)
+            .filter(DisallowedBrowsers.deviceUserID == device_user_id)
+            .first()
+        )
+        if existing:
+            existing.browsers = json.dumps(browsers)
+            existing.updatedAt = now_ms()
+            session.commit()
+            session.refresh(existing)
+            row = existing
+        else:
+            row = DisallowedBrowsers(
+                createdAt=now_ms(),
+                updatedAt=now_ms(),
+                deviceUserID=device_user_id,
+                browsers=json.dumps(browsers),
+            )
+            session.add(row)
+            session.commit()
+            session.refresh(row)
+    finally:
+        session.close()
+
+    _push_disallowed_browsers(device_user_id)
+    return jsonify(disallowed_browsers_public(row))
 
 
 @api.post("/devices/register")

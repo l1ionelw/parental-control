@@ -80,6 +80,7 @@
   <ItemGroup>
     <Compile Include="ConfigManager.cs" />
     <Compile Include="AlwaysAllowedApps.cs" />
+    <Compile Include="DisallowedBrowserEnforcer.cs" />
     <Compile Include="ApplicationFrameHostResolver.cs" />
     <Compile Include="ApplicationResolver.cs" />
     <Compile Include="AppContext.cs" />
@@ -107,6 +108,7 @@
     </Compile>
     <Compile Include="Structs\AlwaysAllowedApp.cs" />
     <Compile Include="Structs\Application.cs" />
+    <Compile Include="Structs\DisallowedBrowser.cs" />
     <Compile Include="Structs\AppLimit.cs" />
     <Compile Include="Structs\AppSwitchedEvent.cs" />
     <Compile Include="Structs\DowntimeWindow.cs" />

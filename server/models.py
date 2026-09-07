@@ -132,6 +132,27 @@ class WebsiteEvent(Base):
     tabTitle = Column(Text, nullable=False)
 
 
+class DisallowedBrowsers(Base):
+    """Per-device list of disallowed browsers - one row per device
+    (deviceUserID is the upsert key, unlike Downtime's multi-row model).
+    'browsers' is a JSON-encoded list of {"id","exeName","pathSubstring"}
+    objects (string convention same as Application.allPaths). Brand-new
+    enforcement mechanism - NOT AppLimit/dailyLimitMinutes=0, since that
+    requires an existing Application catalog row a never-run browser won't
+    have. Enforced trayapp-side by exeName + path-substring match, not by
+    exe name alone, since bare exe names collide across some browsers
+    (chrome.exe: Chrome vs Chromium; launcher.exe/browser.exe: Opera GX,
+    Yandex, Coc Coc)."""
+
+    __tablename__ = "disallowedBrowsers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    createdAt = Column(BigInteger, nullable=False)      # unix ms
+    updatedAt = Column(BigInteger, nullable=False)       # unix ms
+    deviceUserID = Column(Integer, nullable=False)      # -> deviceUser.id (no FK; manual lookup)
+    browsers = Column(Text, nullable=False, default="[]")  # JSON list of {"id","exeName","pathSubstring"}
+
+
 class WebsiteLimit(Base):
     """A per-device daily time budget for one domain. Manual dedup key/upsert key
     is (deviceUserID, domain) - admin-editable, viewable by anyone, same shape as

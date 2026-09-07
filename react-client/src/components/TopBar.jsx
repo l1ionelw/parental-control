@@ -8,6 +8,7 @@ const NAV_ITEMS = [
   { to: '/apps', label: 'Apps' },
   { to: '/screentime', label: 'Screen Time' },
   { to: '/limits', label: 'Limits' },
+  { to: '/browsers', label: 'Browsers' },
   // Admin-only: the viewer websocket handshake rejects non-admin tokens outright.
   { to: '/screenshare', label: 'Screen Share', adminOnly: true },
 ]

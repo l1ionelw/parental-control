@@ -112,6 +112,14 @@ export const api = {
     }),
   clearManualBlock: (deviceUserId) =>
     request(`/manual-block?deviceUserId=${deviceUserId}`, { method: 'DELETE', auth: true }),
+  disallowedBrowsers: (deviceUserId) =>
+    request(`/disallowed-browsers?deviceUserId=${deviceUserId}`, { auth: true }),
+  setDisallowedBrowsers: (deviceUserId, browsers) =>
+    request('/disallowed-browsers', {
+      method: 'PUT',
+      auth: true,
+      body: { deviceUserId, browsers },
+    }),
   blockExceptions: (deviceUserId) =>
     request(`/block-exceptions?deviceUserId=${deviceUserId}`, { auth: true }),
   addBlockException: (deviceUserId, appId) =>

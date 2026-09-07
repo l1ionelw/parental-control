@@ -12,7 +12,7 @@ namespace trayapp
     // device is currently inside one of them.
     internal static class DowntimeEnforcer
     {
-        private const int ConfigurationReloadSeconds = 20; // 5 minutes
+        private const int ConfigurationReloadSeconds = 20;
         private const int EnforcementCheckSeconds = 60; // check the clock once a minute
 
         private static readonly object _lock = new object();
@@ -32,7 +32,18 @@ namespace trayapp
 
             ServerCommunicator.RegisterMessageHandler("downtime", OnDowntimeMessage);
 
+            // WindowChangedListener has no unregister, so subscribe once ever here -
+            // same pattern as ManualBlockEnforcer. Re-checks immediately on every
+            // app switch instead of waiting up to EnforcementCheckSeconds for the
+            // periodic loop to catch a newly-focused app during downtime.
+            WindowChangedListener.RegisterCallback(OnWindowChanged);
+
             _ = Task.Run(() => ReloadLoop(_cts.Token));
+        }
+
+        private static void OnWindowChanged(IntPtr hwnd, long seq)
+        {
+            CheckDowntimeState();
         }
 
         public static void Stop()

@@ -16,7 +16,7 @@ import uuid
 
 from app_tracker import update_application_table, record_event, get_app_by_id
 from db import SessionLocal
-from models import DeviceUser, AppLimit, Downtime, Event, BlockException, WebsiteLimit, WebsiteEvent
+from models import DeviceUser, AppLimit, Downtime, Event, BlockException, WebsiteLimit, WebsiteEvent, DisallowedBrowsers
 import browser_ws
 import manual_block
 import streaming
@@ -310,6 +310,31 @@ def _build_block_exceptions_payload(device_user_id):
         session.close()
 
 
+def _build_disallowed_browsers_payload(device_user_id):
+    """Plain pass-through of the admin-configured browser list - no join against
+    the Application catalog needed (unlike _build_block_exceptions_payload),
+    since these are raw exeName/pathSubstring pairs for browsers that may never
+    have run on this device and therefore have no Application row at all."""
+    if device_user_id is None:
+        return []
+
+    session = SessionLocal()
+    try:
+        row = (
+            session.query(DisallowedBrowsers)
+            .filter(DisallowedBrowsers.deviceUserID == device_user_id)
+            .first()
+        )
+        if row is None or not row.browsers:
+            return []
+        try:
+            return json.loads(row.browsers)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    finally:
+        session.close()
+
+
 def print_registry():
     with registry_lock:
         print(f"\n[REGISTRY] {len(client_registry)} device-user pairs, {len(active_connections)} active connections:")
@@ -495,6 +520,9 @@ def handle(ws):
             elif msg_type == "get_block_exceptions":
                 exceptions = _build_block_exceptions_payload(device_user_id)
                 ws.send(json.dumps({"type": "block_exceptions", "exceptions": exceptions}))
+            elif msg_type == "get_disallowed_browsers":
+                browsers = _build_disallowed_browsers_payload(device_user_id)
+                ws.send(json.dumps({"type": "disallowed_browsers", "browsers": browsers}))
             elif msg_type == "stream_frame":
                 stream_frame_count = _handle_stream_frame(ws, device_user_id, data, stream_frame_count)
             elif not data:

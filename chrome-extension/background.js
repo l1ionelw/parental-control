@@ -12,11 +12,14 @@
 //    screen time, and so the tray app can detect the browser closing (see
 //    TabActivityStore's heartbeat-timeout watchdog).
 // 3. Check the active tab's domain against its limit on every event that also
-//    gets reported to the tray app - tab_switch, tab_url_changed, and the
-//    1-minute heartbeat - so switching straight into an already-over-limit site
-//    gets caught immediately, and a tab that's never switched away from still
-//    gets re-checked as its usage climbs. The separate 3-minute alarm is kept
-//    as a fallback in case none of those fire for a while. Usage itself is
+//    gets reported to the tray app - tab_switch, tab_url_changed, the
+//    1-minute heartbeat, and webNavigation's onBeforeNavigate/
+//    onHistoryStateUpdated for the active tab's main frame - so switching
+//    straight into an already-over-limit site, typing a new URL into an
+//    already-blocked tab, or a same-tab SPA route change all get caught as
+//    early as possible, and a tab that's never switched away from still gets
+//    re-checked as its usage climbs. The separate 3-minute alarm is kept as a
+//    fallback in case none of those fire for a while. Usage itself is
 //    only refreshed tray-app-side every few minutes (see
 //    TabActivityStore.RecomputeDomainUsage), so checking more often than that
 //    doesn't get fresher numbers, but it does close the window between the
@@ -58,6 +61,31 @@ startTabListener(async (event) => {
   await reportTabEvent(event);
   await checkActiveTabLimit();
 });
+
+// Catches navigations that tabs.onUpdated can miss or only report late:
+// typing/following a link to a new URL in the active tab, and same-tab SPA
+// route changes (history.pushState/replaceState) that never fire onUpdated
+// with a changeInfo.url at all. frameId 0 = the top-level document, not
+// iframes. Only checked when it's the currently-active tab that navigated -
+// background tab navigations don't affect what's on screen right now.
+//
+// details.url is the destination, and is passed straight through rather than
+// re-read from chrome.tabs: at onBeforeNavigate time the tab still reports
+// its pre-navigation URL, so re-querying it here would check the page being
+// left instead of the one about to load.
+async function onMainFrameNavigation(details) {
+  if (details.frameId !== 0) return;
+  try {
+    const tab = await chrome.tabs.get(details.tabId);
+    if (!tab.active) return;
+  } catch {
+    return;
+  }
+  await checkActiveTabLimit(details.tabId, details.url);
+}
+
+chrome.webNavigation.onBeforeNavigate.addListener(onMainFrameNavigation);
+chrome.webNavigation.onHistoryStateUpdated.addListener(onMainFrameNavigation);
 
 async function getPendingEvents() {
   const { [PENDING_KEY]: events = [] } = await chrome.storage.local.get(PENDING_KEY);
@@ -149,11 +177,16 @@ function domainOf(url) {
   }
 }
 
-// Checks just the currently active tab's domain against its limit, using the
-// tray app's already-computed browser-focus-clamped usage - called on every
-// tab switch/URL change, on the 1-minute heartbeat, and on the 3-minute
-// fallback alarm (see module docstring).
-async function checkActiveTabLimit() {
+// Checks a tab's domain against its limit, using the tray app's
+// already-computed browser-focus-clamped usage - called on every tab
+// switch/URL change, on the 1-minute heartbeat, on the 3-minute fallback
+// alarm, and on webNavigation events (see module docstring).
+//
+// tabId/urlOverride let onBeforeNavigate check the navigation's *destination*
+// instead of the tab's current URL: chrome.tabs still reports the old URL
+// until the navigation commits, so querying the active tab there would just
+// re-check the page being left, not the one about to load.
+async function checkActiveTabLimit(tabId, urlOverride) {
   let status;
   try {
     const res = await fetch(`${TRAY_APP_BASE_URL}/website-status`);
@@ -164,10 +197,17 @@ async function checkActiveTabLimit() {
     return;
   }
 
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab || !tab.url || tab.id == null) return;
+  let targetTabId = tabId;
+  let url = urlOverride;
+  if (url == null) {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab || !tab.url || tab.id == null) return;
+    targetTabId = tab.id;
+    url = tab.url;
+  }
+  if (targetTabId == null || !url) return;
 
-  const domain = domainOf(tab.url);
+  const domain = domainOf(url);
   if (!domain) return;
 
   const limitMinutes = status.limits?.[domain];
@@ -179,7 +219,7 @@ async function checkActiveTabLimit() {
   console.log(`[parental-control] ${domain} is over its daily limit (${usedSeconds}s >= ${limitMinutes}m), blocking tab`);
   const blockedUrl = chrome.runtime.getURL(`blocked.html?domain=${encodeURIComponent(domain)}`);
   try {
-    await chrome.tabs.update(tab.id, { url: blockedUrl });
+    await chrome.tabs.update(targetTabId, { url: blockedUrl });
   } catch (err) {
     console.error('[parental-control] failed to redirect over-limit tab:', err);
   }

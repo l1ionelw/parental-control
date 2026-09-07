@@ -4,7 +4,7 @@
   "name": "Parental Controls - Browser Monitor",
   "version": "0.2.0",
   "description": "Reports active tab usage to the Parental Controls tray app running locally on this machine.",
-  "permissions": ["tabs", "storage", "alarms"],
+  "permissions": ["tabs", "storage", "alarms", "webNavigation"],
   "host_permissions": ["http://127.0.0.1/*"],
   "background": {
     "service_worker": "background.js",

@@ -42,6 +42,7 @@ namespace TrayApp
             DowntimeEnforcer.Start();
             ScreenTimeEnforcer.Start();
             AlwaysAllowedApps.Start();
+            DisallowedBrowserEnforcer.Start();
             PreviousAppUsedTracker.Start();
             AppActivityStore.Start();
             TabActivityStore.Start();
