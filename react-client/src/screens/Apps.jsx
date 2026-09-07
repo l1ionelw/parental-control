@@ -52,35 +52,39 @@ export default function Apps({ onLogout }) {
         <EmptyState />
       ) : (
         <div className="rounded-3xl bg-white dark:bg-white/[0.04] border border-black/[0.06] dark:border-white/[0.08] shadow-sm overflow-x-auto">
-          <table className="w-full text-left whitespace-nowrap">
+          <table className="w-full text-left">
             <thead>
-              <tr className="border-b border-black/[0.05] dark:border-white/[0.08]">
+              <tr className="border-b border-black/[0.05] dark:border-white/[0.08] whitespace-nowrap">
                 <Th>Executable</Th>
                 <Th>Description</Th>
-                <Th>Normalized Path</Th>
-                <Th>Raw Paths</Th>
+                <Th className="w-[26%]">Normalized Path</Th>
+                <Th className="w-[34%]">Raw Paths</Th>
               </tr>
             </thead>
             <tbody>
               {apps.map((app, i) => (
                 <tr
                   key={app.id}
-                  className="border-b border-black/[0.03] dark:border-white/[0.05] last:border-0 transition hover:bg-slate-50/60 dark:hover:bg-white/[0.04]"
+                  className="border-b border-black/[0.03] dark:border-white/[0.05] last:border-0 transition hover:bg-slate-50/60 dark:hover:bg-white/[0.04] align-top"
                 >
-                  <td className="px-5 py-3 text-[0.92rem] font-semibold text-slate-800 dark:text-slate-200">
+                  <td className="px-5 py-3 text-[0.92rem] font-semibold text-slate-800 dark:text-slate-200 whitespace-nowrap">
                     <span className="font-mono text-[0.85rem]">{app.exeName}</span>
                   </td>
-                  <td className="px-5 py-3 text-[0.88rem] text-slate-600 dark:text-slate-400 max-w-[240px] truncate">
+                  <td className="px-5 py-3 text-[0.88rem] text-slate-600 dark:text-slate-400 whitespace-nowrap">
                     {app.fileDescription || '—'}
                   </td>
-                  <td className="px-5 py-3 text-[0.84rem] text-slate-500 dark:text-slate-400 font-mono max-w-[300px] truncate">
+                  <td className="px-5 py-3 text-[0.84rem] text-slate-500 dark:text-slate-400 font-mono break-all">
                     {app.path || '—'}
                   </td>
-                  <td className="px-5 py-3 text-[0.84rem] text-slate-500 dark:text-slate-400 max-w-[300px]">
+                  <td className="px-5 py-3 text-[0.84rem] text-slate-500 dark:text-slate-400 font-mono">
                     {app.allPaths && app.allPaths.length > 0 ? (
-                      <span className="text-[0.78rem]" title={app.allPaths.join('\n')}>
-                        {app.allPaths.length} path{app.allPaths.length > 1 ? 's' : ''}
-                      </span>
+                      <div className="max-h-[110px] overflow-y-auto flex flex-col gap-1 pr-1">
+                        {app.allPaths.map((p, j) => (
+                          <div key={j} className="break-all leading-snug">
+                            {p}
+                          </div>
+                        ))}
+                      </div>
                     ) : '—'}
                   </td>
                 </tr>

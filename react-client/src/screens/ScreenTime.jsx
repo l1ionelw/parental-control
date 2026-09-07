@@ -1,19 +1,37 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../lib/api'
 import DevicePicker from '../components/DevicePicker'
-import { Activity, ChevronDown, Globe, LayoutGrid, Spinner } from '../components/Icons'
+import { BROWSER_CATALOG } from '../lib/browserCatalog'
+import { Activity, ChevronDown, ChevronLeft, ChevronRight, Globe, LayoutGrid, Spinner } from '../components/Icons'
 
 // Executable names recognized as browsers for the "which browser was actually in
 // the foreground" filter (see BrowserPicker) - only apps we can plausibly attribute
 // tab-focus time to, matched case-insensitively against /api/screentime's exeName.
 // No ".exe" suffix here - app_tracker.py stores exeName without the extension.
-const BROWSER_EXE_NAMES = ['chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi']
+// Derived from the same catalog the "Allowed Browsers" feature uses
+// (lib/browserCatalog.js) so both features recognize the same set of browsers
+// instead of maintaining separate lists.
+const BROWSER_EXE_NAMES = [...new Set(BROWSER_CATALOG.map((b) => b.exeName))]
 
 function todayInputValue() {
   const d = new Date()
   const pad = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+function isValidDateString(s) {
+  return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s)
+}
+
+// +/-1 day from a "YYYY-MM-DD" string, via the Date object so month/year
+// boundaries (and leap years) are handled correctly.
+function shiftDateString(dateStr, deltaDays) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() + deltaDays)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
 }
 
 // Local midnight -> local midnight of the next day, both inclusive per the
@@ -151,7 +169,25 @@ function useAppEvents(selectedId, date, enabled) {
 // (see ScreenTimePage / BrowserScreenTimePage), not local state, so each is its
 // own linkable/bookmarkable URL instead of a client-side-only toggle.
 export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogout, mode }) {
-  const [date, setDate] = useState(todayInputValue)
+  // Kept in the URL's `date` query param (like useDeviceSelection does for the
+  // device) instead of component state, so it survives navigating between
+  // /screentime and /screentime/browser - see ModeTabs, which carries it along.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const dateParam = searchParams.get('date')
+  const date = isValidDateString(dateParam) ? dateParam : todayInputValue()
+  const setDate = useCallback(
+    (d) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.set('date', d)
+          return next
+        },
+        { replace: true }
+      )
+    },
+    [setSearchParams]
+  )
   const [browserFilter, setBrowserFilter] = useState(null)
   const [expandedDomains, setExpandedDomains] = useState(() => new Set())
   const { events, loading, error } = useScreenTimeData(selectedId, date, mode, onLogout)
@@ -317,14 +353,33 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <ModeTabs mode={mode} selectedId={selectedId} />
-          <input
-            type="date"
-            value={date}
-            max={todayInputValue()}
-            onChange={(e) => setDate(e.target.value)}
-            className="h-10 px-3 rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] text-[0.88rem] font-medium text-slate-800 dark:text-slate-200 focus-ring"
-          />
+          <ModeTabs mode={mode} selectedId={selectedId} date={date} />
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setDate(shiftDateString(date, -1))}
+              aria-label="Previous day"
+              className="w-10 h-10 shrink-0 grid place-items-center rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-white/[0.1] transition focus-ring"
+            >
+              <ChevronLeft width={16} height={16} />
+            </button>
+            <input
+              type="date"
+              value={date}
+              max={todayInputValue()}
+              onChange={(e) => setDate(e.target.value)}
+              className="h-10 px-3 rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] text-[0.88rem] font-medium text-slate-800 dark:text-slate-200 focus-ring"
+            />
+            <button
+              type="button"
+              onClick={() => setDate(shiftDateString(date, 1))}
+              disabled={date >= todayInputValue()}
+              aria-label="Next day"
+              className="w-10 h-10 shrink-0 grid place-items-center rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08] text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-50 dark:hover:bg-white/[0.1] transition focus-ring disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white dark:disabled:hover:bg-white/[0.06] disabled:hover:text-slate-500 dark:disabled:hover:text-slate-400"
+            >
+              <ChevronRight width={16} height={16} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -463,7 +518,14 @@ export default function ScreenTime({ devices, selectedId, onSelectDevice, onLogo
                               <div className="text-[0.8rem] font-medium text-slate-600 dark:text-slate-300 truncate">
                                 {p.title}
                               </div>
-                              <div className="text-[0.72rem] text-slate-400 truncate">{p.url}</div>
+                              <a
+                                href={p.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="block text-[0.72rem] text-indigo-500 dark:text-indigo-400 hover:underline truncate"
+                              >
+                                {p.url}
+                              </a>
                             </div>
                             <div className="w-[64px] shrink-0 text-right text-[0.76rem] font-semibold text-slate-500 dark:text-slate-400 tabular-nums">
                               {formatDuration(p.durationMs)}
@@ -551,12 +613,16 @@ function Timeline({ events }) {
   )
 }
 
-// Carries the selected device along as a `?device=` query param so switching
-// between Apps and Browser screen time doesn't reset back to the first
-// device - see useDeviceSelection, which both pages read this same param
-// through.
-function ModeTabs({ mode, selectedId }) {
-  const suffix = selectedId != null ? `?device=${selectedId}` : ''
+// Carries the selected device and date along as `?device=&date=` query params
+// so switching between Apps and Browser screen time doesn't reset back to the
+// first device or today's date - see useDeviceSelection (device) and
+// ScreenTime's own date-in-URL state, which both pages read these same
+// params through.
+function ModeTabs({ mode, selectedId, date }) {
+  const params = new URLSearchParams()
+  if (selectedId != null) params.set('device', selectedId)
+  if (date) params.set('date', date)
+  const suffix = params.toString() ? `?${params.toString()}` : ''
   return (
     <div className="grid grid-cols-2 p-1 rounded-xl bg-white dark:bg-white/[0.06] border border-black/[0.06] dark:border-white/[0.08]">
       <Link

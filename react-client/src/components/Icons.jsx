@@ -15,6 +15,12 @@ const base = {
 export const ChevronDown = (p) => (
   <svg {...base} {...p}><path d="m6 9 6 6 6-6" /></svg>
 )
+export const ChevronLeft = (p) => (
+  <svg {...base} {...p}><path d="m15 18-6-6 6-6" /></svg>
+)
+export const ChevronRight = (p) => (
+  <svg {...base} {...p}><path d="m9 18 6-6-6-6" /></svg>
+)
 export const Check = (p) => (
   <svg {...base} {...p}><path d="M20 6 9 17l-5-5" /></svg>
 )
